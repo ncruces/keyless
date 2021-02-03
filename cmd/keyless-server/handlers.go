@@ -39,7 +39,7 @@ func signingHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var digest [512]byte
+	var digest [65]byte
 	n, err := io.ReadFull(r.Body, digest[:])
 	if err != io.ErrUnexpectedEOF {
 		sendError(http.StatusBadRequest)
