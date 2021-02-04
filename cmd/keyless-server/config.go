@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"strings"
 )
 
 var config struct {
-	Domain  string `json:"domain"`
-	Handler string `json:"handler"`
+	Domain     string `json:"domain"`
+	Handler    string `json:"handler"`
+	Nameserver string `json:"nameserver"`
+	CName      string `json:"cname"`
 
 	Certificate string `json:"certificate"`
 	MasterKey   string `json:"master_key"`
@@ -35,5 +38,22 @@ func loadConfig() error {
 		return err
 	}
 	defer f.Close()
-	return json.NewDecoder(f).Decode(&config)
+
+	err = json.NewDecoder(f).Decode(&config)
+
+	// set defaults
+	if config.Handler == "" {
+		config.Handler = config.Domain + "/"
+	}
+	if config.Nameserver == "" {
+		config.Nameserver = config.Domain
+	}
+	if !strings.HasSuffix(config.Nameserver, ".") {
+		config.Nameserver += "."
+	}
+	if config.CName != "" && !strings.HasSuffix(config.CName, ".") {
+		config.CName += "."
+	}
+
+	return err
 }

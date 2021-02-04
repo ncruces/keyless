@@ -8,7 +8,15 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
+var (
+	nameserver dnsmessage.Name
+	cname      dnsmessage.Name
+)
+
 func dnsServe(conn net.PacketConn) {
+	nameserver = dnsmessage.MustNewName(config.Nameserver)
+	cname = dnsmessage.MustNewName(config.CName)
+
 	buf := make([]byte, 512)
 	for {
 		buf = buf[:cap(buf)]
@@ -92,6 +100,26 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 	header := dnsmessage.ResourceHeader{
 		Name:  question.Name,
 		Class: dnsmessage.ClassINET,
+	}
+
+	// answer authority for SOA
+	if question.Type == dnsmessage.TypeSOA {
+		r.question = question
+		r.answer = func(b *dnsmessage.Builder) error {
+			return b.SOAResource(getAuthority(r.question.Name))
+		}
+		return dnsmessage.RCodeSuccess
+	}
+
+	// send CNAME for root
+	if len(name) == 0 && cname.Length != 0 {
+		header.TTL = 5 * 60 // 5 minutes
+
+		r.question = question
+		r.answer = func(b *dnsmessage.Builder) error {
+			return b.CNAMEResource(header, dnsmessage.CNAMEResource{CNAME: cname})
+		}
+		return dnsmessage.RCodeSuccess
 	}
 
 	switch question.Type {
@@ -221,21 +249,7 @@ func (r *response) sendAuthority(builder *dnsmessage.Builder) error {
 		return err
 	}
 
-	ns := dnsmessage.MustNewName(config.Domain + ".")
-
-	return builder.SOAResource(dnsmessage.ResourceHeader{
-		Name:  r.question.Name,
-		Class: dnsmessage.ClassINET,
-		TTL:   7 * 86400, // 7 days
-	}, dnsmessage.SOAResource{
-		NS:   ns,
-		MBox: ns,
-		// https://www.ripe.net/publications/docs/ripe-203
-		Refresh: 86400,
-		Retry:   7200,
-		Expire:  3600000,
-		MinTTL:  3600,
-	})
+	return builder.SOAResource(getAuthority(r.question.Name))
 }
 
 func getIPv4(name []byte) net.IP {
@@ -264,6 +278,22 @@ func getIPv6(name []byte) net.IP {
 	}
 
 	return net.ParseIP(string(name)).To16()
+}
+
+func getAuthority(name dnsmessage.Name) (dnsmessage.ResourceHeader, dnsmessage.SOAResource) {
+	return dnsmessage.ResourceHeader{
+			Name:  name,
+			Class: dnsmessage.ClassINET,
+			TTL:   7 * 86400, // 7 days
+		}, dnsmessage.SOAResource{
+			NS:   nameserver,
+			MBox: nameserver,
+			// https://www.ripe.net/publications/docs/ripe-203
+			Refresh: 86400,
+			Retry:   7200,
+			Expire:  3600000,
+			MinTTL:  3600,
+		}
 }
 
 func logError(err error) {
