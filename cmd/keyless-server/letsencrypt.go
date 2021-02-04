@@ -101,7 +101,7 @@ func renewCertificate() {
 		log.Fatalf("creating master key: %v", err)
 	}
 
-	err = createCertificate(ctx, le, acct, master, config.Domain)
+	err = createCertificate(ctx, le, acct, master, "*."+config.Domain)
 	if err != nil {
 		log.Fatalf("creating certificate: %v", err)
 	}

@@ -68,7 +68,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) bool {
 		name := question.Name.Data
 		size := int(question.Name.Length)
 
-		ip := getIPv4(name[:size])
+		ip := getIPv4(name[:size-1])
 		if ip == nil {
 			return false
 		}
@@ -93,7 +93,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) bool {
 		name := question.Name.Data
 		size := int(question.Name.Length)
 
-		ip := getIPv6(name[:size])
+		ip := getIPv6(name[:size-1])
 		if ip == nil {
 			return false
 		}
@@ -178,7 +178,7 @@ func (r *response) sendAnswers(builder *dnsmessage.Builder) error {
 
 func getIPv4(name []byte) net.IP {
 	i := bytes.IndexByte(name, '.')
-	if i <= 0 {
+	if i <= 0 || string(name[i+1:]) != config.Domain {
 		return nil
 	}
 
@@ -197,7 +197,7 @@ func getIPv4(name []byte) net.IP {
 
 func getIPv6(name []byte) net.IP {
 	i := bytes.IndexByte(name, '.')
-	if i <= 0 {
+	if i <= 0 || string(name[i+1:]) != config.Domain {
 		return nil
 	}
 

@@ -6,9 +6,8 @@ import (
 )
 
 var config struct {
-	Domain      string `json:"domain"`
-	CertHandler string `json:"cert_handler"`
-	SignHandler string `json:"sign_handler"`
+	Domain  string `json:"domain"`
+	Handler string `json:"handler"`
 
 	Certificate string `json:"certificate"`
 	MasterKey   string `json:"master_key"`

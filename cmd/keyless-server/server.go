@@ -61,8 +61,8 @@ func main() {
 		fs[1].Close()
 	}
 
-	http.Handle(config.CertHandler, http.HandlerFunc(certificateHandler))
-	http.Handle(config.SignHandler, http.HandlerFunc(signingHandler))
+	http.Handle(config.Handler+"/certificate", http.HandlerFunc(certificateHandler))
+	http.Handle(config.Handler+"/sign", http.HandlerFunc(signingHandler))
 
 	server, err := origin.NewServer(config.Cloudflare.Cert, config.Cloudflare.Key, config.Cloudflare.PullCA)
 	if err != nil {
