@@ -37,12 +37,28 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ln, err := activation.Listeners()
-	if err != nil {
-		log.Fatalln("get listeners:", err)
+	fs := activation.Files(true)
+	if len(fs) > 2 {
+		log.Fatalln("activation: unexpected number of files")
 	}
-	if len(ln) > 1 {
-		log.Fatalln("get listeners: unexpected number of listeners")
+
+	var httpln net.Listener
+	var dnsconn net.PacketConn
+	if len(fs) > 0 {
+		var err error
+		httpln, err = net.FileListener(fs[0])
+		if err != nil {
+			log.Fatalln("activation:", err)
+		}
+		fs[0].Close()
+	}
+	if len(fs) > 1 {
+		var err error
+		dnsconn, err = net.FilePacketConn(fs[1])
+		if err != nil {
+			log.Fatalln("activation:", err)
+		}
+		fs[1].Close()
 	}
 
 	http.Handle(config.CertHandler, http.HandlerFunc(certificateHandler))
@@ -50,21 +66,33 @@ func main() {
 
 	server, err := origin.NewServer(config.Cloudflare.Cert, config.Cloudflare.Key, config.Cloudflare.PullCA)
 	if err != nil {
-		log.Fatalln("create server:", err)
+		log.Fatalln("create http server:", err)
 	}
-	server.Addr = "localhost:http"
+	server.Addr = "localhost:8080"
 	server.BaseContext = func(_ net.Listener) context.Context { return ctx }
 
 	go func() {
 		var err error
-		if len(ln) == 0 {
+		if httpln == nil {
 			err = server.ListenAndServe()
 		} else {
-			err = server.ServeTLS(ln[0], "", "")
+			err = server.ServeTLS(httpln, "", "")
 		}
 		if err != http.ErrServerClosed {
-			log.Fatalln("server:", err)
+			log.Fatalln("http server:", err)
 		}
+	}()
+
+	go func() {
+		var err error
+		if dnsconn == nil {
+			dnsconn, err = net.ListenPacket("udp", "localhost:5353")
+			if err != nil {
+				log.Fatalln("dns server:", err)
+			}
+			defer dnsconn.Close()
+		}
+		dnsServe(dnsconn)
 	}()
 
 	daemon.SdNotify(true, daemon.SdNotifyReady)
@@ -74,6 +102,6 @@ func main() {
 		log.Fatalln("received second signal:", <-shutdown)
 	}()
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalln("shutdown server:", err)
+		log.Fatalln("shutdown http server:", err)
 	}
 }

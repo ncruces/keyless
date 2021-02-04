@@ -8,13 +8,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-func dnsServe() error {
-	conn, err := net.ListenPacket("udp", "localhost:53")
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
+func dnsServe(conn net.PacketConn) {
 	buf := make([]byte, 512)
 	for {
 		buf = buf[:cap(buf)]
