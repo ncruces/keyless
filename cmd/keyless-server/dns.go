@@ -82,7 +82,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 	var name []byte
 	if question.Name.Length > 0 {
 		copy := question.Name.Data
-		name = copy[:question.Name.Length-1]
+		name = bytes.ToLower(copy[:question.Name.Length-1])
 	}
 	if n := bytes.TrimSuffix(name, []byte(config.Domain)); len(n) != len(name) {
 		switch {
@@ -161,7 +161,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 			break
 		}
 
-		res := dnsmessage.TXTResource{}
+		res := dnsmessage.TXTResource{TXT: dnsSolver.getChallenges()}
 		header.TTL = 60 // 1 minute
 
 		r.question = question

@@ -16,15 +16,96 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/mholt/acmez"
 	"github.com/mholt/acmez/acme"
-	"github.com/ncruces/go-cloudflare/acmecf"
 )
 
 var privateKeys = make(map[string]crypto.Signer)
+
+const (
+	letsencryptProduction = "https://acme-v02.api.letsencrypt.org/"
+	letsencryptStaging    = "https://acme-staging-v02.api.letsencrypt.org/"
+)
+
+// Checks that LetsEncrypt is setup correctly at startup.
+// Load private keys (master and legacy) into memory.
+// Rotating the master key requires a process restart.
+func loadLetsEncrypt() error {
+	_, err := loadAccount()
+	if err != nil {
+		return err
+	}
+	return loadCertificate()
+}
+
+// Setup LetsEncrypt interactively.
+func setupLetsEncrypt() {
+	fmt.Println("Running setup...")
+	fmt.Println()
+
+	ctx := context.Background()
+	client := &acmez.Client{
+		Client: &acme.Client{},
+		ChallengeSolvers: map[string]acmez.Solver{
+			acme.ChallengeTypeDNS01: &dnsSolver,
+		},
+	}
+
+	acct, err := loadAccount()
+	if err == nil {
+		fmt.Println("Using the existing Let's Encrypt account.")
+	} else {
+		acct, err = createAccount(ctx, client)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+
+	if client.Directory == "" {
+		if strings.HasPrefix(acct.Location, letsencryptProduction) {
+			client.Directory = letsencryptProduction + "directory"
+		} else {
+			client.Directory = letsencryptStaging + "directory"
+		}
+	}
+
+	master, err := createKey("master", config.MasterKey)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	fmt.Println()
+	fmt.Println("Starting DNS server for domain validation...")
+	fmt.Println("Please, ensure:")
+	fmt.Println(" - NS records for", config.Domain, "are setup;")
+	fmt.Println(" - we are reachable from the internet on UDP port 53.")
+	fmt.Print("Continue? ")
+	fmt.Scanln()
+	fmt.Println()
+
+	conn, err := net.ListenPacket("udp", ":53")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer conn.Close()
+	go dnsServe(conn)
+
+	fmt.Println("Obtaining a certificate...")
+	err = createCertificate(ctx, client, acct, master, "*."+config.Domain)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	fmt.Println()
+	fmt.Println("Done!")
+}
 
 func loadCertificate() error {
 	cert, err := tls.LoadX509KeyPair(config.Certificate, config.MasterKey)
@@ -45,21 +126,10 @@ func loadCertificate() error {
 		}
 
 		for _, match := range matches {
-			buf, err := ioutil.ReadFile(match)
+			key, err := loadKey(match)
 			if err != nil {
 				return err
 			}
-
-			blk, _ := pem.Decode(buf)
-			if blk == nil {
-				return errors.New("no PEM data found")
-			}
-
-			key, err := x509.ParseECPrivateKey(blk.Bytes)
-			if err != nil {
-				return err
-			}
-
 			keys = append(keys, key)
 		}
 	}
@@ -76,40 +146,44 @@ func loadCertificate() error {
 	return nil
 }
 
-func renewCertificate() {
-	ctx := context.Background()
-
-	solver, err := acmecf.NewDNS01Solver(config.Cloudflare.Zone, config.Cloudflare.Token)
+func loadAccount() (acct acme.Account, err error) {
+	acct.PrivateKey, err = loadKey(config.LetsEncrypt.AccountKey)
 	if err != nil {
-		log.Fatalf("creating DNS01 solver: %v", err)
+		return acct, err
 	}
 
-	le := &acmez.Client{
-		Client: &acme.Client{Directory: config.LetsEncrypt.API},
-		ChallengeSolvers: map[string]acmez.Solver{
-			acme.ChallengeTypeDNS01: solver,
-		},
-	}
-
-	acct, err := createAccount(ctx, le)
+	f, err := os.Open(config.LetsEncrypt.Account)
 	if err != nil {
-		log.Fatalf("creating account: %v", err)
+		return acct, err
 	}
 
-	master, err := createKey(config.MasterKey)
-	if err != nil {
-		log.Fatalf("creating master key: %v", err)
-	}
-
-	err = createCertificate(ctx, le, acct, master, "*."+config.Domain)
-	if err != nil {
-		log.Fatalf("creating certificate: %v", err)
-	}
+	defer f.Close()
+	return acct, json.NewDecoder(f).Decode(&acct)
 }
 
-func createKey(keyFile string) (*ecdsa.PrivateKey, error) {
+func loadKey(keyFile string) (*ecdsa.PrivateKey, error) {
+	buf, err := ioutil.ReadFile(keyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	blk, _ := pem.Decode(buf)
+	if blk == nil {
+		return nil, errors.New("no PEM data found")
+	}
+
+	return x509.ParseECPrivateKey(blk.Bytes)
+}
+
+func createKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
 	if buf, err := ioutil.ReadFile(keyFile); os.IsNotExist(err) {
-		// generate new key
+		fmt.Println("Creating a new", keyName, "private key...")
+
+		err := os.MkdirAll(filepath.Dir(keyFile), 0700)
+		if err != nil {
+			return nil, err
+		}
+
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, err
@@ -121,43 +195,66 @@ func createKey(keyFile string) (*ecdsa.PrivateKey, error) {
 		}
 
 		pem := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
-		err = ioutil.WriteFile(keyFile, pem, 0600)
+		err = ioutil.WriteFile(keyFile, pem, 0400)
 		if err != nil {
 			return nil, err
 		}
 
 		return key, nil
 
-	} else if err == nil {
-		// load existing key
+	} else {
+		fmt.Println("Using the existing", keyName, "private key...")
+		if err != nil {
+			return nil, err
+		}
+
 		blk, _ := pem.Decode(buf)
 		if blk == nil {
 			return nil, errors.New("no PEM data found")
 		}
 		return x509.ParseECPrivateKey(blk.Bytes)
-
-	} else {
-		return nil, err
 	}
 }
 
-func createAccount(ctx context.Context, le *acmez.Client) (acct acme.Account, err error) {
-	acct.PrivateKey, err = createKey(config.LetsEncrypt.AccountKey)
+func createAccount(ctx context.Context, client *acmez.Client) (acct acme.Account, err error) {
+	fmt.Println("Creating a new Let's Encrypt account...")
+
+	err = os.MkdirAll(filepath.Dir(config.LetsEncrypt.Account), 0700)
 	if err != nil {
 		return acct, err
 	}
 
-	f, err := os.Open(config.LetsEncrypt.Account)
-	if err == nil {
-		defer f.Close()
-		return acct, json.NewDecoder(f).Decode(&acct)
+	acct.PrivateKey, err = createKey("account", config.LetsEncrypt.AccountKey)
+	if err != nil {
+		return acct, err
 	}
 
-	if config.LetsEncrypt.Email != "" {
-		acct.Contact = append(acct.Contact, "mailto:"+config.LetsEncrypt.Email)
+	var answer string
+
+	fmt.Println()
+	fmt.Print("Accept Let's Encrypt ToS? [y/n]: ")
+	fmt.Scanln(&answer)
+	if answer != "y" {
+		return acct, errors.New("Did not accept Let's Encrypt ToS")
 	}
+
+	fmt.Print("Use the production API? [y/n]: ")
+	fmt.Scanln(&answer)
+	if answer == "y" {
+		client.Directory = letsencryptProduction + "directory"
+	} else {
+		client.Directory = letsencryptStaging + "directory"
+	}
+
+	fmt.Print("Enter an email address: ")
+	fmt.Scanln(&answer)
+	if answer != "" {
+		acct.Contact = append(acct.Contact, "mailto:"+answer)
+	}
+	fmt.Println()
+
 	acct.TermsOfServiceAgreed = true
-	acct, err = le.NewAccount(ctx, acct)
+	acct, err = client.NewAccount(ctx, acct)
 	if err != nil {
 		return acct, err
 	}
@@ -167,7 +264,7 @@ func createAccount(ctx context.Context, le *acmez.Client) (acct acme.Account, er
 		return acct, err
 	}
 
-	err = ioutil.WriteFile(config.LetsEncrypt.Account, json, 0600)
+	err = ioutil.WriteFile(config.LetsEncrypt.Account, json, 0400)
 	return acct, err
 }
 
@@ -178,7 +275,45 @@ func createCertificate(ctx context.Context, le *acmez.Client, acct acme.Account,
 	}
 
 	for _, acme := range certs {
-		return ioutil.WriteFile(config.Certificate, acme.ChainPEM, 0600)
+		return ioutil.WriteFile(config.Certificate, acme.ChainPEM, 0400)
 	}
 	return errors.New("no certificates obtained")
+}
+
+var dnsSolver dns01Solver
+
+type dns01Solver struct {
+	sync.Mutex
+	challange string
+	timestamp time.Time
+}
+
+func (s *dns01Solver) getChallenges() []string {
+	s.Lock()
+	defer s.Unlock()
+	if s.challange != "" {
+		return []string{s.challange}
+	}
+	return nil
+}
+
+func (s *dns01Solver) Present(_ context.Context, chal acme.Challenge) error {
+	if chal.Type != acme.ChallengeTypeDNS01 {
+		return errors.New("unexpected challenge")
+	}
+
+	s.Lock()
+	defer s.Unlock()
+	if s.challange != "" {
+		return errors.New("already running a challenge")
+	}
+	s.challange = chal.DNS01KeyAuthorization()
+	return nil
+}
+
+func (s *dns01Solver) CleanUp(context.Context, acme.Challenge) error {
+	s.Lock()
+	defer s.Unlock()
+	s.challange = ""
+	return nil
 }

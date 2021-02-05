@@ -17,16 +17,12 @@ var config struct {
 	LegacyKeys  string `json:"legacy_keys"`
 
 	Cloudflare struct {
-		Zone   string `json:"zone"`
-		Token  string `json:"token"`
 		Cert   string `json:"origin_cert"`
 		Key    string `json:"origin_key"`
 		PullCA string `json:"origin_pull_ca"`
 	} `json:"cloudflare"`
 
 	LetsEncrypt struct {
-		API        string `json:"api"`
-		Email      string `json:"email"`
 		Account    string `json:"account_cfg"`
 		AccountKey string `json:"account_key"`
 	} `json:"letsencrypt"`
@@ -42,9 +38,7 @@ func loadConfig() error {
 	err = json.NewDecoder(f).Decode(&config)
 
 	// set defaults
-	if config.Handler == "" {
-		config.Handler = config.Domain + "/"
-	}
+	config.Handler = strings.TrimSuffix(config.Handler, "/")
 	if config.Nameserver == "" {
 		config.Nameserver = config.Domain
 	}

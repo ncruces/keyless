@@ -14,25 +14,29 @@ import (
 	"github.com/ncruces/go-cloudflare/origin"
 )
 
-var shutdown = make(chan os.Signal, 1)
-
-func init() {
-	signal.Notify(shutdown, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-}
-
 func main() {
 	if err := loadConfig(); err != nil {
 		log.Fatal(err)
 	}
 
-	if len(os.Args) > 1 && os.Args[1] == "renew" {
-		renewCertificate()
+	if err := loadLetsEncrypt(); len(os.Args) > 1 && os.Args[1] == "setup" {
+		// run the interactive setup and exit
+		log.SetFlags(0)
+		log.SetOutput(os.Stdout)
+		if err != nil {
+			setupLetsEncrypt()
+		} else {
+			log.Println("It seems you're all set!")
+		}
 		return
+	} else if err != nil {
+		// ask the user to run the interactive setup
+		log.Println("letsencrypt:", err)
+		log.Fatalln("please, run:", os.Args[0], "setup")
 	}
 
-	if err := loadCertificate(); err != nil {
-		log.Fatal(err)
-	}
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -66,7 +70,7 @@ func main() {
 
 	server, err := origin.NewServer(config.Cloudflare.Cert, config.Cloudflare.Key, config.Cloudflare.PullCA)
 	if err != nil {
-		log.Fatalln("create http server:", err)
+		log.Fatalln("http server:", err)
 	}
 	server.Addr = "localhost:8080"
 	server.BaseContext = func(_ net.Listener) context.Context { return ctx }
