@@ -39,9 +39,6 @@ func loadConfig() error {
 
 	// set defaults
 	config.Handler = strings.TrimSuffix(config.Handler, "/")
-	if config.Nameserver == "" {
-		config.Nameserver = config.Domain
-	}
 	if !strings.HasSuffix(config.Nameserver, ".") {
 		config.Nameserver += "."
 	}

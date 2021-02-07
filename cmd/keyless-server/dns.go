@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"log"
 	"net"
+	"strings"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
@@ -78,16 +78,12 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 		return dnsmessage.RCodeNotImplemented
 	}
 
-	// refuse everything outside the zone
-	var name []byte
-	if question.Name.Length > 0 {
-		copy := question.Name.Data
-		name = bytes.ToLower(copy[:question.Name.Length-1])
-	}
-	if n := bytes.TrimSuffix(name, []byte(config.Domain)); len(n) != len(name) {
+	// refuse anything outside our zone
+	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
+	if n := strings.TrimSuffix(name, config.Domain); len(n) != len(name) {
 		switch {
 		case len(n) == 0:
-			name = nil
+			name = ""
 		case n[len(n)-1] == '.':
 			name = n[:len(n)-1]
 		default:
@@ -97,83 +93,97 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 		return dnsmessage.RCodeRefused
 	}
 
+	// otherwise, answer the question
+	r.question = question
+
 	header := dnsmessage.ResourceHeader{
 		Name:  question.Name,
 		Class: dnsmessage.ClassINET,
 	}
 
-	// answer authority for SOA
-	if question.Type == dnsmessage.TypeSOA {
-		r.question = question
-		r.answer = func(b *dnsmessage.Builder) error {
-			return b.SOAResource(getAuthority(r.question.Name))
+	// apex domain
+	if name == "" {
+		switch {
+		case question.Type == dnsmessage.TypeSOA:
+			r.answer = func(b *dnsmessage.Builder) error {
+				return b.SOAResource(getAuthority(r.question.Name))
+			}
+
+		case question.Type == dnsmessage.TypeNS:
+			header.TTL = 7 * 86400 // 7 days
+			r.answer = func(b *dnsmessage.Builder) error {
+				return b.NSResource(header, dnsmessage.NSResource{NS: nameserver})
+			}
+
+		// https://blog.cloudflare.com/zone-apex-naked-domain-root-domain-cname-supp/
+		case cname.Length != 0:
+			header.TTL = 5 * 60 // 5 minutes
+			r.answer = func(b *dnsmessage.Builder) error {
+				return b.CNAMEResource(header, dnsmessage.CNAMEResource{CNAME: cname})
+			}
+
+		default:
+			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
-	// send CNAME for root
-	if len(name) == 0 && cname.Length != 0 {
-		header.TTL = 5 * 60 // 5 minutes
+	// Let's Encrypt challenge
+	if name == "_acme-challenge" {
+		switch {
+		case question.Type == dnsmessage.TypeTXT:
+			header.TTL = 60 // 1 minute
+			r.answer = func(b *dnsmessage.Builder) error {
+				return b.TXTResource(header, dnsmessage.TXTResource{TXT: dnsSolver.getChallenges()})
+			}
 
-		r.question = question
-		r.answer = func(b *dnsmessage.Builder) error {
-			return b.CNAMEResource(header, dnsmessage.CNAMEResource{CNAME: cname})
+		default:
+			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
-	switch question.Type {
+	// NXDOMAIN multi-level subdomains
+	if strings.ContainsRune(name, '.') {
+		r.authority = true
+		return dnsmessage.RCodeNameError
+	}
 
-	case dnsmessage.TypeA:
-		ip := getIPv4(name)
-		if ip == nil {
-			break
-		}
+	// finally, IP addresses
+	ipv4 := getIPv4(name)
+	ipv6 := getIPv6(name)
+	if ipv4 != nil || ipv6 != nil {
+		switch question.Type {
+		case dnsmessage.TypeA:
+			if ipv4 != nil {
+				res := dnsmessage.AResource{}
+				copy(res.A[:], ipv4)
+				header.TTL = 7 * 86400 // 7 days
 
-		res := dnsmessage.AResource{}
-		copy(res.A[:], ip)
-		header.TTL = 7 * 86400 // 7 days
+				r.answer = func(b *dnsmessage.Builder) error {
+					return b.AResource(header, res)
+				}
+			}
 
-		r.question = question
-		r.answer = func(b *dnsmessage.Builder) error {
-			return b.AResource(header, res)
-		}
-		return dnsmessage.RCodeSuccess
+		case dnsmessage.TypeAAAA:
+			if ipv6 != nil {
+				res := dnsmessage.AAAAResource{}
+				copy(res.AAAA[:], ipv6)
+				header.TTL = 7 * 86400 // 7 days
 
-	case dnsmessage.TypeAAAA:
-		ip := getIPv6(name)
-		if ip == nil {
-			break
-		}
+				r.answer = func(b *dnsmessage.Builder) error {
+					return b.AAAAResource(header, res)
+				}
+			}
 
-		res := dnsmessage.AAAAResource{}
-		copy(res.AAAA[:], ip)
-		header.TTL = 7 * 86400 // 7 days
-
-		r.question = question
-		r.answer = func(b *dnsmessage.Builder) error {
-			return b.AAAAResource(header, res)
-		}
-		return dnsmessage.RCodeSuccess
-
-	case dnsmessage.TypeTXT:
-		if string(name) != "_acme-challenge" {
-			break
-		}
-
-		res := dnsmessage.TXTResource{TXT: dnsSolver.getChallenges()}
-		header.TTL = 60 // 1 minute
-
-		r.question = question
-		r.answer = func(b *dnsmessage.Builder) error {
-			return b.TXTResource(header, res)
+		default:
+			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
-	// NXDOMAIN with authority for everything else
+	// NXDOMAIN everything else
 	r.authority = true
-	r.question = question
 	return dnsmessage.RCodeNameError
 }
 
@@ -252,32 +262,22 @@ func (r *response) sendAuthority(builder *dnsmessage.Builder) error {
 	return builder.SOAResource(getAuthority(r.question.Name))
 }
 
-func getIPv4(name []byte) net.IP {
-	if string(name) == "local" {
+func getIPv4(name string) net.IP {
+	if name == "local" {
 		return net.IPv4(127, 0, 0, 1).To4()
 	}
 
-	for i := range name {
-		if name[i] == '-' {
-			name[i] = '.'
-		}
-	}
-
+	name = strings.ReplaceAll(name, "-", ".")
 	return net.ParseIP(string(name)).To4()
 }
 
-func getIPv6(name []byte) net.IP {
-	if string(name) == "local" {
+func getIPv6(name string) net.IP {
+	if name == "local" {
 		return net.IPv6loopback
 	}
 
-	for i := range name {
-		if name[i] == '-' {
-			name[i] = ':'
-		}
-	}
-
-	return net.ParseIP(string(name)).To16()
+	name = strings.ReplaceAll(name, "-", ":")
+	return net.ParseIP(string(name))
 }
 
 func getAuthority(name dnsmessage.Name) (dnsmessage.ResourceHeader, dnsmessage.SOAResource) {
