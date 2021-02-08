@@ -81,24 +81,29 @@ func setupLetsEncrypt() {
 		log.Fatalln(err)
 	}
 
+	app := filepath.Base(os.Args[0])
+	domain := strings.TrimSuffix(config.Domain, ".")
+	nameserver := strings.TrimSuffix(config.Nameserver, ".")
 	fmt.Println()
 	fmt.Println("Starting DNS server for domain validation...")
-	fmt.Println("Please, ensure:")
-	fmt.Println(" - NS records for", config.Domain, "are setup;")
-	fmt.Println(" - we are reachable from the internet on UDP port 53.")
+	fmt.Println("Please, ensure that:")
+	fmt.Printf(" - NS records for %s point to %s\n", domain, nameserver)
+	fmt.Printf(" - %s is reachable from the internet on UDP %s:53\n", app, nameserver)
 	fmt.Print("Continue? ")
 	fmt.Scanln()
 	fmt.Println()
 
-	conn, err := net.ListenPacket("udp", ":53")
+	conn, err := net.ListenPacket("udp", config.Nameserver+":53")
 	if err != nil {
-		log.Fatalln(err)
+		if conn, _ = net.ListenPacket("udp", ":53"); conn == nil {
+			log.Fatalln(err)
+		}
 	}
 	defer conn.Close()
 	go dnsServe(conn)
 
 	fmt.Println("Obtaining a certificate...")
-	err = createCertificate(ctx, client, acct, master, "*."+config.Domain)
+	err = createCertificate(ctx, client, acct, master, "*."+domain)
 	if err != nil {
 		log.Fatalln(err)
 	}

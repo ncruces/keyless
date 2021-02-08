@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 )
@@ -35,10 +36,38 @@ func loadConfig() error {
 	}
 	defer f.Close()
 
-	err = json.NewDecoder(f).Decode(&config)
+	if err := json.NewDecoder(f).Decode(&config); err != nil {
+		return err
+	}
+
+	// check required fields
+	if config.Domain == "" {
+		return errors.New("domain is not configured")
+	}
+	if config.Handler == "" {
+		return errors.New("handler is not configured")
+	}
+	if config.Nameserver == "" {
+		return errors.New("nameserver is not configured")
+	}
+	if config.Certificate == "" {
+		return errors.New("certificate file path is not configured")
+	}
+	if config.MasterKey == "" {
+		return errors.New("master_key file path is not configured")
+	}
+	if config.LetsEncrypt.Account == "" {
+		return errors.New("letsencrypt.account_cfg file path is not configured")
+	}
+	if config.LetsEncrypt.Account == "" {
+		return errors.New("letsencrypt.account_key file path is not configured")
+	}
 
 	// set defaults
 	config.Handler = strings.TrimSuffix(config.Handler, "/")
+	if !strings.HasSuffix(config.Domain, ".") {
+		config.Domain += "."
+	}
 	if !strings.HasSuffix(config.Nameserver, ".") {
 		config.Nameserver += "."
 	}
@@ -46,5 +75,5 @@ func loadConfig() error {
 		config.CName += "."
 	}
 
-	return err
+	return nil
 }

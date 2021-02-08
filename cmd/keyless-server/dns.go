@@ -21,6 +21,10 @@ func dnsServe(conn net.PacketConn) {
 	for {
 		buf = buf[:cap(buf)]
 		n, addr, err := conn.ReadFrom(buf)
+		// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
+		if err != nil && strings.HasSuffix(err.Error(), "use of closed network connection") {
+			break
+		}
 		if err != nil {
 			logError(err)
 			continue
@@ -79,7 +83,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 	}
 
 	// refuse everything outside our zone
-	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
+	name := strings.ToLower(question.Name.String())
 	if n := strings.TrimSuffix(name, config.Domain); len(n) != len(name) {
 		switch {
 		case len(n) == 0:
