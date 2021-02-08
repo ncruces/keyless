@@ -48,7 +48,7 @@ func dnsServe(conn net.PacketConn) {
 		}
 
 		question, err := parser.Question()
-		// refuse no questions
+		// refuse zero questions
 		if err == dnsmessage.ErrSectionDone {
 			res.header.RCode = dnsmessage.RCodeRefused
 			logError(res.send(conn, addr, buf))
@@ -59,7 +59,7 @@ func dnsServe(conn net.PacketConn) {
 			logError(res.send(conn, addr, buf))
 			continue
 		}
-		// answer first question
+		// answer the first question only, ingore everything else
 		res.header.RCode = res.answerQuestion(question)
 		logError(res.send(conn, addr, buf))
 	}
@@ -78,7 +78,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 		return dnsmessage.RCodeNotImplemented
 	}
 
-	// refuse anything outside our zone
+	// refuse everything outside our zone
 	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
 	if n := strings.TrimSuffix(name, config.Domain); len(n) != len(name) {
 		switch {
@@ -101,7 +101,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 		Class: dnsmessage.ClassINET,
 	}
 
-	// apex domain
+	// apex domain, must have SOA and NS
 	if name == "" {
 		switch {
 		case question.Type == dnsmessage.TypeSOA:
@@ -115,6 +115,20 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 				return b.NSResource(header, dnsmessage.NSResource{NS: nameserver})
 			}
 
+		// CAA allows Let's Encrypt wildcards, denies everything else
+		// this prevents DoS by exausting Let's Encrypt quotas
+		// dnsmessage does not support CAA records: use TXT, convert to CAA later
+		case question.Type == 257: // CAA
+			header.TTL = 7 * 86400 // 7 days
+			r.answer = func(b *dnsmessage.Builder) error {
+				err := b.TXTResource(header, dnsmessage.TXTResource{TXT: []string{`0 issue ";"`}})
+				if err != nil {
+					return err
+				}
+				return b.TXTResource(header, dnsmessage.TXTResource{TXT: []string{`0 issuewild "letsencrypt.org"`}})
+			}
+
+		// CNAME is not RFC compliant, but mostly works:
 		// https://blog.cloudflare.com/zone-apex-naked-domain-root-domain-cname-supp/
 		case cname.Length != 0:
 			header.TTL = 5 * 60 // 5 minutes
@@ -132,7 +146,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 	if name == "_acme-challenge" {
 		switch {
 		case question.Type == dnsmessage.TypeTXT:
-			header.TTL = 60 // 1 minute
+			header.TTL = 5 * 60 // 5 minutes
 			r.answer = func(b *dnsmessage.Builder) error {
 				return b.TXTResource(header, dnsmessage.TXTResource{TXT: dnsSolver.getChallenges()})
 			}
@@ -212,6 +226,8 @@ func (r *response) send(conn net.PacketConn, addr net.Addr, buf []byte) error {
 	if err != nil {
 		return err
 	}
+
+	out = convertTXTtoCAA(out)
 
 	// truncate
 	if len(out) > 512 {
