@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"path"
 	"time"
 )
 
@@ -37,8 +38,8 @@ func httpInit() (*http.Server, error) {
 	}
 
 	var mux http.ServeMux
-	mux.Handle(config.API.Handler+"/sign", http.HandlerFunc(signingHandler))
-	mux.Handle(config.API.Handler+"/certificate", http.HandlerFunc(certificateHandler))
+	mux.Handle(path.Clean(config.API.Handler+"/sign"), http.HandlerFunc(signingHandler))
+	mux.Handle(path.Clean(config.API.Handler+"/certificate"), http.HandlerFunc(certificateHandler))
 
 	server := http.Server{
 		Handler:      &mux,

@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -15,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,91 +30,13 @@ const (
 	letsencryptStaging    = "https://acme-staging-v02.api.letsencrypt.org/"
 )
 
-// Checks that LetsEncrypt is setup correctly at startup.
-// Load private keys (master and legacy) into memory.
-// Rotating the master key requires a process restart.
-func loadLetsEncrypt() error {
-	_, err := loadAccount()
-	if err != nil {
-		return err
-	}
-	return loadCertificate()
-}
-
-// Setup LetsEncrypt interactively.
-func setupLetsEncrypt() {
-	fmt.Println("Running setup...")
-	fmt.Println()
-
-	ctx := context.Background()
-	client := &acmez.Client{
-		Client: &acme.Client{},
-		ChallengeSolvers: map[string]acmez.Solver{
-			acme.ChallengeTypeDNS01: &dnsSolver,
-		},
-	}
-
-	acct, err := loadAccount()
-	if err == nil {
-		fmt.Println("Using the existing Let's Encrypt account.")
-	} else {
-		acct, err = createAccount(ctx, client)
-		if err != nil {
-			log.Fatalln(err)
-		}
-	}
-
-	if client.Directory == "" {
-		if strings.HasPrefix(acct.Location, letsencryptProduction) {
-			client.Directory = letsencryptProduction + "directory"
-		} else {
-			client.Directory = letsencryptStaging + "directory"
-		}
-	}
-
-	master, err := createKey("master", config.MasterKey)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	app := filepath.Base(os.Args[0])
-	domain := strings.TrimSuffix(config.Domain, ".")
-	nameserver := strings.TrimSuffix(config.Nameserver, ".")
-	fmt.Println()
-	fmt.Println("Starting DNS server for domain validation...")
-	fmt.Println("Please, ensure that:")
-	fmt.Printf(" - NS records for %s point to %s\n", domain, nameserver)
-	fmt.Printf(" - %s is reachable from the internet on UDP %s:53\n", app, nameserver)
-	fmt.Print("Continue? ")
-	fmt.Scanln()
-	fmt.Println()
-
-	conn, err := net.ListenPacket("udp", config.Nameserver+":53")
-	if err != nil {
-		if conn, _ = net.ListenPacket("udp", ":53"); conn == nil {
-			log.Fatalln(err)
-		}
-	}
-	defer conn.Close()
-	go dnsServe(conn)
-
-	fmt.Println("Obtaining a certificate...")
-	err = createCertificate(ctx, client, acct, master, "*."+domain)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	fmt.Println()
-	fmt.Println("Done!")
-}
-
-func loadCertificate() error {
-	cert, err := tls.LoadX509KeyPair(config.Certificate, config.MasterKey)
+func loadCertificateAndKeys() error {
+	cert, err := loadCertificate(config.Certificate, config.MasterKey, "*."+config.Domain)
 	if err != nil {
 		return err
 	}
 
-	key, ok := cert.PrivateKey.(crypto.Signer)
+	key, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
 	if !ok {
 		return fmt.Errorf("unexpected type %T", cert.PrivateKey)
 	}
@@ -147,6 +65,29 @@ func loadCertificate() error {
 
 		hash := sha256.Sum256(der)
 		privateKeys[base64.RawURLEncoding.EncodeToString(hash[:])] = key
+	}
+	return nil
+}
+
+func loadAPI() error {
+	var hostname string
+	if i := strings.IndexByte(config.API.Handler, '/'); i > 0 {
+		hostname = config.API.Handler[:i]
+	}
+	_, err := loadCertificate(config.API.Certificate, config.API.Key, hostname)
+	if err != nil {
+		return err
+	}
+
+	if config.API.ClientCA != "" {
+		cert, err := ioutil.ReadFile(config.API.ClientCA)
+		if err != nil {
+			return err
+		}
+
+		if pool := x509.NewCertPool(); !pool.AppendCertsFromPEM(cert) {
+			return errors.New("could not parse client CA certificate")
+		}
 	}
 	return nil
 }
@@ -180,101 +121,33 @@ func loadKey(keyFile string) (*ecdsa.PrivateKey, error) {
 	return x509.ParseECPrivateKey(blk.Bytes)
 }
 
-func createKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
-	if buf, err := ioutil.ReadFile(keyFile); os.IsNotExist(err) {
-		fmt.Println("Creating a new", keyName, "private key...")
-
-		err := os.MkdirAll(filepath.Dir(keyFile), 0700)
-		if err != nil {
-			return nil, err
-		}
-
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-
-		der, err := x509.MarshalECPrivateKey(key)
-		if err != nil {
-			return nil, err
-		}
-
-		pem := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
-		err = ioutil.WriteFile(keyFile, pem, 0400)
-		if err != nil {
-			return nil, err
-		}
-
-		return key, nil
-
-	} else {
-		fmt.Println("Using the existing", keyName, "private key...")
-		if err != nil {
-			return nil, err
-		}
-
-		blk, _ := pem.Decode(buf)
-		if blk == nil {
-			return nil, errors.New("no PEM data found")
-		}
-		return x509.ParseECPrivateKey(blk.Bytes)
+func loadCertificate(certFile, keyFile, hostname string) (tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return tls.Certificate{}, err
 	}
+	if err := verifyCertificate(cert, hostname); err != nil {
+		return tls.Certificate{}, err
+	}
+	return cert, nil
 }
 
-func createAccount(ctx context.Context, client *acmez.Client) (acct acme.Account, err error) {
-	fmt.Println("Creating a new Let's Encrypt account...")
-
-	err = os.MkdirAll(filepath.Dir(config.LetsEncrypt.Account), 0700)
+func verifyCertificate(cert tls.Certificate, hostname string) (err error) {
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		return acct, err
+		return err
 	}
-
-	acct.PrivateKey, err = createKey("account", config.LetsEncrypt.AccountKey)
-	if err != nil {
-		return acct, err
+	if now := time.Now(); now.Before(cert.Leaf.NotBefore) || now.After(cert.Leaf.NotAfter) {
+		return errors.New("expired certificate")
 	}
-
-	var answer string
-
-	fmt.Println()
-	fmt.Print("Accept Let's Encrypt ToS? [y/n]: ")
-	fmt.Scanln(&answer)
-	if answer != "y" {
-		return acct, errors.New("Did not accept Let's Encrypt ToS")
+	if hostname != "" {
+		return cert.Leaf.VerifyHostname(hostname)
 	}
-
-	fmt.Print("Use the production API? [y/n]: ")
-	fmt.Scanln(&answer)
-	if answer == "y" {
-		client.Directory = letsencryptProduction + "directory"
-	} else {
-		client.Directory = letsencryptStaging + "directory"
-	}
-
-	fmt.Print("Enter an email address: ")
-	fmt.Scanln(&answer)
-	if answer != "" {
-		acct.Contact = append(acct.Contact, "mailto:"+answer)
-	}
-	fmt.Println()
-
-	acct.TermsOfServiceAgreed = true
-	acct, err = client.NewAccount(ctx, acct)
-	if err != nil {
-		return acct, err
-	}
-
-	json, err := json.MarshalIndent(acct, "", "  ")
-	if err != nil {
-		return acct, err
-	}
-
-	err = ioutil.WriteFile(config.LetsEncrypt.Account, json, 0400)
-	return acct, err
+	return nil
 }
 
-func createCertificate(ctx context.Context, le *acmez.Client, acct acme.Account, key crypto.Signer, domain string) error {
-	certs, err := le.ObtainCertificate(ctx, acct, key, []string{domain})
+func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Account, key crypto.Signer, domain string) error {
+	certs, err := client.ObtainCertificate(ctx, acct, key, []string{domain})
 	if err != nil {
 		return err
 	}

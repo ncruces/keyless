@@ -13,10 +13,16 @@ var (
 	cname      dnsmessage.Name
 )
 
-func dnsServe(conn net.PacketConn) error {
-	nameserver = dnsmessage.MustNewName(config.Nameserver)
-	cname = dnsmessage.MustNewName(config.CName)
+func dnsConfig() error {
+	var err error
+	nameserver, err = dnsmessage.NewName(config.Nameserver + ".")
+	if err == nil && config.CName != "" {
+		cname, err = dnsmessage.NewName(config.CName + ".")
+	}
+	return err
+}
 
+func dnsServe(conn net.PacketConn) error {
 	buf := make([]byte, 512)
 	for {
 		var nerr net.Error
@@ -84,7 +90,7 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 	}
 
 	// refuse everything outside our zone
-	name := strings.ToLower(question.Name.String())
+	name := strings.TrimSuffix(strings.ToLower(question.Name.String()), ".")
 	if n := strings.TrimSuffix(name, config.Domain); len(n) != len(name) {
 		switch {
 		case len(n) == 0:

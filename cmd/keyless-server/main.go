@@ -20,17 +20,12 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	if err := loadLetsEncrypt(); len(os.Args) > 1 && os.Args[1] == "setup" {
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		// run the interactive setup and exit
-		log.SetFlags(0)
-		log.SetOutput(os.Stdout)
-		if err != nil {
-			setupLetsEncrypt()
-		} else {
-			log.Println("It seems you're all set!")
-		}
+		interactiveSetup()
 		return
-	} else if err != nil {
+	}
+	if err := checkSetup(); err != nil {
 		// ask the user to run the interactive setup
 		log.Println("letsencrypt:", err)
 		log.Fatalln("please, run:", os.Args[0], "setup")

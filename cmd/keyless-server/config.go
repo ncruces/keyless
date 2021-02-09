@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 )
 
 var config struct {
@@ -53,27 +52,16 @@ func loadConfig() error {
 	if config.MasterKey == "" {
 		return errors.New("master_key file path is not configured")
 	}
-	if config.API.Handler == "" {
-		return errors.New("handler is not configured")
-	}
 	if config.LetsEncrypt.Account == "" {
-		return errors.New("letsencrypt.account_cfg file path is not configured")
+		return errors.New("letsencrypt.account file path is not configured")
 	}
 	if config.LetsEncrypt.Account == "" {
 		return errors.New("letsencrypt.account_key file path is not configured")
 	}
 
-	// set defaults
-	if !strings.HasSuffix(config.Domain, ".") {
-		config.Domain += "."
+	if err := dnsConfig(); err != nil {
+		return err
 	}
-	if !strings.HasSuffix(config.Nameserver, ".") {
-		config.Nameserver += "."
-	}
-	if config.CName != "" && !strings.HasSuffix(config.CName, ".") {
-		config.CName += "."
-	}
-	config.API.Handler = strings.TrimSuffix(config.API.Handler, "/")
 
 	return nil
 }

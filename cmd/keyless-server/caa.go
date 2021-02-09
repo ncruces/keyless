@@ -21,8 +21,8 @@ func convertTXTtoCAA(in []byte) []byte {
 			return 0, nil
 		}
 
-		size := int(rec[10]) + 11
-		val := rec[11:size]
+		rec = rec[:11+int(rec[10])]
+		val := rec[11:]
 
 		// len("0 issue \";\"")
 		if len(val) < 11 {
@@ -61,15 +61,15 @@ func convertTXTtoCAA(in []byte) []byte {
 			return 0, nil
 		}
 
-		data = make([]byte, 0, size-4) // removed 2 spaces, 2 quotes
-		data = append(data, 1, 1)      // TypeCAA
+		data = make([]byte, 0, len(rec)-4) // removed 2 spaces, 2 quotes
+		data = append(data, 1, 1)          // TypeCAA
 		data = append(data, 0, byte(dnsmessage.ClassINET))
 		data = append(data, rec[4:8]...) // TTL
 		data = append(data, 0, rec[9]-4) // removed 2 spaces, 2 quotes
 		data = append(data, flags, byte(len(tag)))
 		data = append(data, tag...)
 		data = append(data, val...)
-		return size, data
+		return len(rec), data
 	}
 
 	out := make([]byte, 0, len(in))
