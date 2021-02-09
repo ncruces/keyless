@@ -2,21 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
-	"github.com/ncruces/go-cloudflare/origin"
 )
 
 func main() {
 	if err := loadConfig(); err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 
 	if err := loadLetsEncrypt(); len(os.Args) > 1 && os.Args[1] == "setup" {
@@ -37,7 +38,6 @@ func main() {
 
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -63,49 +63,58 @@ func main() {
 			log.Fatalln("activation:", err)
 		}
 		fs[1].Close()
+	} else {
+		var err error
+		dnsconn, err = net.ListenPacket("udp", "localhost:5353")
+		if err != nil {
+			log.Fatalln("dns server:", err)
+		}
+		defer dnsconn.Close()
 	}
 
-	http.Handle(config.Handler+"/certificate", http.HandlerFunc(certificateHandler))
-	http.Handle(config.Handler+"/sign", http.HandlerFunc(signingHandler))
-
-	server, err := origin.NewServer(config.Cloudflare.Cert, config.Cloudflare.Key, config.Cloudflare.PullCA)
+	httpsrv, err := httpInit()
 	if err != nil {
 		log.Fatalln("http server:", err)
 	}
-	server.Addr = "localhost:8080"
-	server.BaseContext = func(_ net.Listener) context.Context { return ctx }
+	httpsrv.Addr = "localhost:8080"
+	httpsrv.BaseContext = func(_ net.Listener) context.Context { return ctx }
 
 	go func() {
 		var err error
 		if httpln == nil {
-			err = server.ListenAndServe()
+			err = httpsrv.ListenAndServe()
 		} else {
-			err = server.ServeTLS(httpln, "", "")
+			err = httpsrv.ServeTLS(httpln, "", "")
 		}
-		if err != http.ErrServerClosed {
+		if !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalln("http server:", err)
 		}
 	}()
 
 	go func() {
-		var err error
-		if dnsconn == nil {
-			dnsconn, err = net.ListenPacket("udp", "localhost:5353")
-			if err != nil {
-				log.Fatalln("dns server:", err)
-			}
-			defer dnsconn.Close()
+		err := dnsServe(dnsconn)
+		// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
+		if err != nil && !strings.HasSuffix(err.Error(), "use of closed network connection") {
+			log.Fatalln("dns server:", err)
 		}
-		dnsServe(dnsconn)
 	}()
 
 	daemon.SdNotify(true, daemon.SdNotifyReady)
 
 	<-shutdown
 	go func() {
-		log.Fatalln("received second signal:", <-shutdown)
+		log.Fatalln(<-shutdown)
 	}()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := dnsconn.Close(); err != nil {
+		log.Fatalln("close dns connection:", err)
+	}
+	if err := httpsrv.Shutdown(ctx); err != nil {
 		log.Fatalln("shutdown http server:", err)
+	}
+}
+
+func logError(err error) {
+	if err != nil {
+		log.Println(err)
 	}
 }

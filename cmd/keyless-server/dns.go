@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"errors"
 	"net"
 	"strings"
 
@@ -13,17 +13,17 @@ var (
 	cname      dnsmessage.Name
 )
 
-func dnsServe(conn net.PacketConn) {
+func dnsServe(conn net.PacketConn) error {
 	nameserver = dnsmessage.MustNewName(config.Nameserver)
 	cname = dnsmessage.MustNewName(config.CName)
 
 	buf := make([]byte, 512)
 	for {
+		var nerr net.Error
 		buf = buf[:cap(buf)]
 		n, addr, err := conn.ReadFrom(buf)
-		// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
-		if err != nil && strings.HasSuffix(err.Error(), "use of closed network connection") {
-			break
+		if errors.As(err, &nerr) && !nerr.Temporary() && !nerr.Timeout() {
+			return err
 		}
 		if err != nil {
 			logError(err)
@@ -56,6 +56,7 @@ func dnsServe(conn net.PacketConn) {
 		if err == dnsmessage.ErrSectionDone {
 			res.header.RCode = dnsmessage.RCodeRefused
 			logError(res.send(conn, addr, buf))
+			continue
 		}
 		// report error
 		if err != nil {
@@ -314,10 +315,4 @@ func getAuthority(name dnsmessage.Name) (dnsmessage.ResourceHeader, dnsmessage.S
 			Expire:  3600000,
 			MinTTL:  3600,
 		}
-}
-
-func logError(err error) {
-	if err != nil {
-		log.Println(err)
-	}
 }

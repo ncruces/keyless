@@ -9,7 +9,6 @@ import (
 
 var config struct {
 	Domain     string `json:"domain"`
-	Handler    string `json:"handler"`
 	Nameserver string `json:"nameserver"`
 	CName      string `json:"cname"`
 
@@ -17,14 +16,15 @@ var config struct {
 	MasterKey   string `json:"master_key"`
 	LegacyKeys  string `json:"legacy_keys"`
 
-	Cloudflare struct {
-		Cert   string `json:"origin_cert"`
-		Key    string `json:"origin_key"`
-		PullCA string `json:"origin_pull_ca"`
-	} `json:"cloudflare"`
+	API struct {
+		Handler     string `json:"handler"`
+		Certificate string `json:"certificate"`
+		Key         string `json:"key"`
+		ClientCA    string `json:"client_ca"`
+	} `json:"api"`
 
 	LetsEncrypt struct {
-		Account    string `json:"account_cfg"`
+		Account    string `json:"account"`
 		AccountKey string `json:"account_key"`
 	} `json:"letsencrypt"`
 }
@@ -44,9 +44,6 @@ func loadConfig() error {
 	if config.Domain == "" {
 		return errors.New("domain is not configured")
 	}
-	if config.Handler == "" {
-		return errors.New("handler is not configured")
-	}
 	if config.Nameserver == "" {
 		return errors.New("nameserver is not configured")
 	}
@@ -56,6 +53,9 @@ func loadConfig() error {
 	if config.MasterKey == "" {
 		return errors.New("master_key file path is not configured")
 	}
+	if config.API.Handler == "" {
+		return errors.New("handler is not configured")
+	}
 	if config.LetsEncrypt.Account == "" {
 		return errors.New("letsencrypt.account_cfg file path is not configured")
 	}
@@ -64,7 +64,6 @@ func loadConfig() error {
 	}
 
 	// set defaults
-	config.Handler = strings.TrimSuffix(config.Handler, "/")
 	if !strings.HasSuffix(config.Domain, ".") {
 		config.Domain += "."
 	}
@@ -74,6 +73,7 @@ func loadConfig() error {
 	if config.CName != "" && !strings.HasSuffix(config.CName, ".") {
 		config.CName += "."
 	}
+	config.API.Handler = strings.TrimSuffix(config.API.Handler, "/")
 
 	return nil
 }

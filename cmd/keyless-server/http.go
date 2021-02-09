@@ -3,9 +3,53 @@ package main
 import (
 	"crypto"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"time"
 )
+
+func httpInit() (*http.Server, error) {
+	cert, err := tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
+	if err != nil {
+		return nil, err
+	}
+
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := tls.Config{}
+	cfg.Certificates = append(cfg.Certificates, cert)
+
+	if config.API.ClientCA != "" {
+		cert, err := ioutil.ReadFile(config.API.ClientCA)
+		if err != nil {
+			return nil, err
+		}
+
+		cfg.ClientCAs = x509.NewCertPool()
+		cfg.ClientCAs.AppendCertsFromPEM(cert)
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	var mux http.ServeMux
+	mux.Handle(config.API.Handler+"/sign", http.HandlerFunc(signingHandler))
+	mux.Handle(config.API.Handler+"/certificate", http.HandlerFunc(certificateHandler))
+
+	server := http.Server{
+		Handler:      &mux,
+		TLSConfig:    &cfg,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  10 * time.Minute,
+	}
+
+	return &server, nil
+}
 
 func certificateHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
