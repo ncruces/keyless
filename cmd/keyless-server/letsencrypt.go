@@ -146,52 +146,105 @@ func verifyCertificate(cert tls.Certificate, hostname string) (err error) {
 	return nil
 }
 
-func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Account, key crypto.Signer, domain string) error {
-	certs, err := client.ObtainCertificate(ctx, acct, key, []string{domain})
+func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Account, key crypto.Signer, domains ...string) error {
+	certs, err := client.ObtainCertificate(ctx, acct, key, domains)
 	if err != nil {
 		return err
 	}
 
 	for _, acme := range certs {
-		return ioutil.WriteFile(config.Certificate, acme.ChainPEM, 0400)
+		f, err := ioutil.TempFile(filepath.Split(config.Certificate))
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(acme.ChainPEM)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
+		return os.Rename(f.Name(), config.Certificate)
 	}
 	return errors.New("no certificates obtained")
 }
 
-var dnsSolver dns01Solver
+var (
+	solver acmeSolver
+	_      acmez.Solver = &solver
+)
 
-type dns01Solver struct {
+type acmeSolver struct {
 	sync.Mutex
-	challange string
-	timestamp time.Time
+	challanges []acmeChallenge
 }
 
-func (s *dns01Solver) getChallenges() []string {
+type acmeChallenge struct {
+	Created time.Time
+	acme.Challenge
+}
+
+func (c acmeChallenge) Expired() bool {
+	return time.Since(c.Created) > time.Minute
+}
+
+func (s *acmeSolver) Remove(match func(c acmeChallenge) bool) {
+	var n int
+	for _, c := range s.challanges {
+		if !match(c) {
+			s.challanges[n] = c
+			n++
+		}
+	}
+	for i := range s.challanges[n:] {
+		s.challanges[i] = acmeChallenge{}
+	}
+	s.challanges = s.challanges[:n]
+}
+
+func (s *acmeSolver) GetDNSChallenges(domain string) []string {
 	s.Lock()
 	defer s.Unlock()
-	if s.challange != "" {
-		return []string{s.challange}
+
+	var res []string
+	s.Remove(acmeChallenge.Expired)
+	for _, c := range s.challanges {
+		if c.Type == acme.ChallengeTypeDNS01 && c.Identifier.Value == domain {
+			res = append(res, c.DNS01KeyAuthorization())
+		}
 	}
+	return res
+}
+
+func (s *acmeSolver) GetTLSChallengeCert(serverName string) (*tls.Certificate, error) {
+	s.Lock()
+	defer s.Unlock()
+
+	s.Remove(acmeChallenge.Expired)
+	for _, c := range s.challanges {
+		if c.Type == acme.ChallengeTypeTLSALPN01 && c.Identifier.Value == serverName {
+			return acmez.TLSALPN01ChallengeCert(c.Challenge)
+		}
+	}
+	return nil, errors.New("no matching challanges found")
+}
+
+func (s *acmeSolver) Present(_ context.Context, chal acme.Challenge) error {
+	s.Lock()
+	defer s.Unlock()
+
+	s.Remove(acmeChallenge.Expired)
+	s.challanges = append(s.challanges, acmeChallenge{
+		Created:   time.Now(),
+		Challenge: chal,
+	})
 	return nil
 }
 
-func (s *dns01Solver) Present(_ context.Context, chal acme.Challenge) error {
-	if chal.Type != acme.ChallengeTypeDNS01 {
-		return errors.New("unexpected challenge")
-	}
-
+func (s *acmeSolver) CleanUp(_ context.Context, chal acme.Challenge) error {
 	s.Lock()
 	defer s.Unlock()
-	if s.challange != "" {
-		return errors.New("already running a challenge")
-	}
-	s.challange = chal.DNS01KeyAuthorization()
-	return nil
-}
 
-func (s *dns01Solver) CleanUp(context.Context, acme.Challenge) error {
-	s.Lock()
-	defer s.Unlock()
-	s.challange = ""
+	s.Remove(func(c acmeChallenge) bool { return chal == c.Challenge })
 	return nil
 }

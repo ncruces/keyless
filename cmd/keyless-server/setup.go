@@ -51,7 +51,8 @@ func interactiveSetup() {
 	client := &acmez.Client{
 		Client: &acme.Client{},
 		ChallengeSolvers: map[string]acmez.Solver{
-			acme.ChallengeTypeDNS01: &dnsSolver,
+			acme.ChallengeTypeDNS01:     &solver,
+			acme.ChallengeTypeTLSALPN01: &solver,
 		},
 	}
 
@@ -103,15 +104,15 @@ func setupAccount(ctx context.Context, client *acmez.Client) (acct acme.Account,
 
 	fmt.Println()
 	fmt.Print("Accept Let's Encrypt ToS? [y/n]: ")
-	if n, _ := fmt.Scanln(&answer); n == 1 && answer != "y" {
+	if n, _ := fmt.Scanln(&answer); n != 1 || answer != "y" {
 		return acct, errors.New("Did not accept Let's Encrypt ToS")
 	}
 
 	fmt.Print("Use the production API? [y/n]: ")
-	if n, _ := fmt.Scanln(&answer); n == 1 && answer != "y" {
-		client.Directory = letsencryptProduction + "directory"
-	} else {
+	if n, _ := fmt.Scanln(&answer); n != 1 || answer != "y" {
 		client.Directory = letsencryptStaging + "directory"
+	} else {
+		client.Directory = letsencryptProduction + "directory"
 	}
 
 	fmt.Print("Enter an email address: ")

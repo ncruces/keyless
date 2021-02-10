@@ -159,7 +159,9 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 		case question.Type == dnsmessage.TypeTXT:
 			header.TTL = 5 * 60 // 5 minutes
 			r.answer = func(b *dnsmessage.Builder) error {
-				return b.TXTResource(header, dnsmessage.TXTResource{TXT: dnsSolver.getChallenges()})
+				return b.TXTResource(header, dnsmessage.TXTResource{
+					TXT: solver.GetDNSChallenges(config.Domain),
+				})
 			}
 
 		default:
