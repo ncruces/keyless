@@ -159,7 +159,7 @@ func setupCertificateAndKeys(ctx context.Context, client *acmez.Client, acct acm
 	fmt.Scanln()
 	fmt.Println()
 
-	conn, err := setupUDP(config.Nameserver, "53")
+	conn, err := setupUDP(config.Nameserver, ":53")
 	if err != nil {
 		return err
 	}
@@ -175,6 +175,33 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 		fmt.Println("Using the existing API certificates and key.")
 		return nil
 	}
+
+	var hostname string
+	app := filepath.Base(os.Args[0])
+	if i := strings.IndexByte(config.API.Handler, '/'); i > 0 {
+		hostname = config.API.Handler[:i]
+	}
+
+	fmt.Println()
+	fmt.Println("Starting HTTPS server for hostname validation...")
+	fmt.Println("Please, ensure that:")
+	fmt.Printf(" - %s is reachable from the internet on TCP %s:443\n", app, hostname)
+	fmt.Print("Continue? ")
+	fmt.Scanln()
+	fmt.Println()
+
+	conn, err := setupTCP(hostname, ":443")
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	server, err := httpInit()
+	if err != nil {
+		return err
+	}
+
+	_ = server
 	return nil
 }
 
@@ -220,15 +247,15 @@ func setupKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
 }
 
 func setupUDP(host, port string) (net.PacketConn, error) {
-	conn, _ := net.ListenPacket("udp", host+":"+port)
+	conn, _ := net.ListenPacket("udp", host+port)
 	if conn == nil && host != "" {
-		conn, _ = net.ListenPacket("udp", ":"+port)
+		conn, _ = net.ListenPacket("udp", port)
 	}
 	if conn != nil {
 		return conn, nil
 	}
 
-	fmt.Println("Could not listen on UDP :" + port)
+	fmt.Println("Could not listen on UDP", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err
@@ -238,15 +265,15 @@ func setupUDP(host, port string) (net.PacketConn, error) {
 }
 
 func setupTCP(host, port string) (net.Listener, error) {
-	conn, _ := net.Listen("tcp", host+":"+port)
+	conn, _ := net.Listen("tcp", host+port)
 	if conn == nil && host != "" {
-		conn, _ = net.Listen("tcp", ":"+port)
+		conn, _ = net.Listen("tcp", port)
 	}
 	if conn != nil {
 		return conn, nil
 	}
 
-	fmt.Println("Could not listen on TCP :" + port)
+	fmt.Println("Could not listen on TCP", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err
@@ -256,7 +283,7 @@ func setupTCP(host, port string) (net.Listener, error) {
 }
 
 func setupAddress() (string, error) {
-	fmt.Print("Enter the host:port address to bind to: ")
+	fmt.Print("Enter the host:port address to listen on: ")
 
 	var answer string
 	fmt.Scanln(&answer)

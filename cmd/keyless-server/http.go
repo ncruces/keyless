@@ -5,26 +5,35 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"path"
 	"time"
 )
 
 func httpInit() (*http.Server, error) {
+	var cfg tls.Config
+
 	cert, err := tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
-	if err != nil {
+	if err == nil {
+		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+	}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 
-	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return nil, err
+	cfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if chi.ServerName == "" {
+			return nil, errors.New("missing server name")
+		}
+		if err := chi.SupportsCertificate(&cert); err != nil {
+			return nil, errors.New("certificate not supported")
+		}
+		return &cert, nil
 	}
-
-	cfg := tls.Config{}
-	cfg.Certificates = append(cfg.Certificates, cert)
 
 	if config.API.ClientCA != "" {
 		cert, err := ioutil.ReadFile(config.API.ClientCA)
