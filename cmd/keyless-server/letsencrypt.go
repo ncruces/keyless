@@ -146,14 +146,14 @@ func verifyCertificate(cert tls.Certificate, hostname string) (err error) {
 	return nil
 }
 
-func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Account, key crypto.Signer, domains ...string) error {
+func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Account, key crypto.Signer, certFile string, domains ...string) error {
 	certs, err := client.ObtainCertificate(ctx, acct, key, domains)
 	if err != nil {
 		return err
 	}
 
 	for _, acme := range certs {
-		f, err := ioutil.TempFile(filepath.Split(config.Certificate))
+		f, err := ioutil.TempFile(filepath.Split(certFile))
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Acco
 		if err != nil {
 			return err
 		}
-		return os.Rename(f.Name(), config.Certificate)
+		return os.Rename(f.Name(), certFile)
 	}
 	return errors.New("no certificates obtained")
 }

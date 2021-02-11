@@ -12,6 +12,8 @@ import (
 	"os"
 	"path"
 	"time"
+
+	"github.com/mholt/acmez"
 )
 
 func httpInit() (*http.Server, error) {
@@ -25,12 +27,20 @@ func httpInit() (*http.Server, error) {
 		return nil, err
 	}
 
+	cfg.NextProtos = []string{"h2", "http/1.1", acmez.ACMETLS1Protocol}
+
 	cfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if chi.ServerName == "" {
 			return nil, errors.New("missing server name")
 		}
+		if len(chi.SupportedProtos) == 1 && chi.SupportedProtos[0] == acmez.ACMETLS1Protocol {
+			return solver.GetTLSChallengeCert(chi.ServerName)
+		}
+		if cert.Certificate == nil {
+			return nil, errors.New("missing certificate")
+		}
 		if err := chi.SupportsCertificate(&cert); err != nil {
-			return nil, errors.New("certificate not supported")
+			return nil, err
 		}
 		return &cert, nil
 	}

@@ -166,14 +166,19 @@ func setupCertificateAndKeys(ctx context.Context, client *acmez.Client, acct acm
 	defer conn.Close()
 	go dnsServe(conn)
 
-	fmt.Println("Obtaining a certificate...")
-	return obtainCertificate(ctx, client, acct, key, "*."+config.Domain)
+	fmt.Printf("Obtaining a certificate for *.%s...\n", config.Domain)
+	return obtainCertificate(ctx, client, acct, key, config.Certificate, "*."+config.Domain)
 }
 
 func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) error {
 	if loadAPI() == nil {
 		fmt.Println("Using the existing API certificates and key.")
 		return nil
+	}
+
+	key, err := setupKey("API", config.API.Key)
+	if err != nil {
+		return err
 	}
 
 	var hostname string
@@ -190,19 +195,22 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 	fmt.Scanln()
 	fmt.Println()
 
-	conn, err := setupTCP(hostname, ":443")
+	ln, err := setupTCP(hostname, ":443")
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer ln.Close()
 
 	server, err := httpInit()
 	if err != nil {
 		return err
 	}
+	defer server.Close()
 
-	_ = server
-	return nil
+	go server.ServeTLS(ln, "", "")
+
+	fmt.Printf("Obtaining a certificate for %s...\n", hostname)
+	return obtainCertificate(ctx, client, acct, key, config.API.Certificate, hostname)
 }
 
 func setupKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
@@ -255,7 +263,7 @@ func setupUDP(host, port string) (net.PacketConn, error) {
 		return conn, nil
 	}
 
-	fmt.Println("Could not listen on UDP", port)
+	fmt.Printf("Could not listen on UDP %s.", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err
@@ -273,7 +281,7 @@ func setupTCP(host, port string) (net.Listener, error) {
 		return conn, nil
 	}
 
-	fmt.Println("Could not listen on TCP", port)
+	fmt.Printf("Could not listen on TCP %s.", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err
