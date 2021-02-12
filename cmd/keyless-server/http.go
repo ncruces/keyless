@@ -2,12 +2,15 @@ package main
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"net/http"
 	"os"
 	"path"
@@ -16,14 +19,19 @@ import (
 	"github.com/mholt/acmez"
 )
 
+var apiCert tls.Certificate
+
 func httpInit() (*http.Server, error) {
+	var err error
 	var cfg tls.Config
 
-	cert, err := tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
-	if err == nil {
-		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
+	apiCert, err = tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
+	if os.IsNotExist(err) {
+		apiCert.PrivateKey, err = loadKey(config.API.Key)
+	} else if err == nil {
+		apiCert.Leaf, err = x509.ParseCertificate(apiCert.Certificate[0])
 	}
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return nil, err
 	}
 
@@ -34,15 +42,15 @@ func httpInit() (*http.Server, error) {
 			return nil, errors.New("missing server name")
 		}
 		if len(chi.SupportedProtos) == 1 && chi.SupportedProtos[0] == acmez.ACMETLS1Protocol {
-			return solver.GetTLSChallengeCert(chi.ServerName)
+			return solvers.GetTLSChallengeCert(chi.ServerName)
 		}
-		if cert.Certificate == nil {
-			return nil, errors.New("missing certificate")
+		if apiCert.Certificate == nil {
+			return getSelfSignedCert(apiCert.PrivateKey)
 		}
-		if err := chi.SupportsCertificate(&cert); err != nil {
+		if err := chi.SupportsCertificate(&apiCert); err != nil {
 			return nil, err
 		}
-		return &cert, nil
+		return &apiCert, nil
 	}
 
 	if config.API.ClientCA != "" {
@@ -57,6 +65,7 @@ func httpInit() (*http.Server, error) {
 	}
 
 	var mux http.ServeMux
+	mux.Handle("/.well-known/acme-challenge/", http.HandlerFunc(solvers.HandleHTTPChallenge))
 	mux.Handle(path.Clean(config.API.Handler+"/sign"), http.HandlerFunc(signingHandler))
 	mux.Handle(path.Clean(config.API.Handler+"/certificate"), http.HandlerFunc(certificateHandler))
 
@@ -118,4 +127,30 @@ func signingHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(signature)
+}
+
+func getSelfSignedCert(key crypto.PrivateKey) (*tls.Certificate, error) {
+	pk, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("unexpected type %T", key)
+	}
+
+	template := x509.Certificate{
+		SerialNumber:          &big.Int{},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(0, 0, 1),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	data, err := x509.CreateCertificate(rand.Reader, &template, &template, &pk.PublicKey, pk)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Certificate{
+		Certificate: [][]byte{data},
+		PrivateKey:  key,
+	}, nil
 }

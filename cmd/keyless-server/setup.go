@@ -48,13 +48,7 @@ func interactiveSetup() {
 
 	fmt.Println()
 	ctx := context.Background()
-	client := &acmez.Client{
-		Client: &acme.Client{},
-		ChallengeSolvers: map[string]acmez.Solver{
-			acme.ChallengeTypeDNS01:     &solver,
-			acme.ChallengeTypeTLSALPN01: &solver,
-		},
-	}
+	client := &acmez.Client{Client: &acme.Client{}}
 
 	acct, err := setupAccount(ctx, client)
 	if err != nil {
@@ -166,6 +160,7 @@ func setupCertificateAndKeys(ctx context.Context, client *acmez.Client, acct acm
 	defer conn.Close()
 	go dnsServe(conn)
 
+	client.ChallengeSolvers = solvers.GetDNSSolvers()
 	fmt.Printf("Obtaining a certificate for *.%s...\n", config.Domain)
 	return obtainCertificate(ctx, client, acct, key, config.Certificate, "*."+config.Domain)
 }
@@ -209,6 +204,7 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 
 	go server.ServeTLS(ln, "", "")
 
+	client.ChallengeSolvers = solvers.GetAPISolvers()
 	fmt.Printf("Obtaining a certificate for %s...\n", hostname)
 	return obtainCertificate(ctx, client, acct, key, config.API.Certificate, hostname)
 }
@@ -263,7 +259,7 @@ func setupUDP(host, port string) (net.PacketConn, error) {
 		return conn, nil
 	}
 
-	fmt.Printf("Could not listen on UDP %s.", port)
+	fmt.Printf("Could not listen on UDP %s.\n", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err
@@ -281,7 +277,7 @@ func setupTCP(host, port string) (net.Listener, error) {
 		return conn, nil
 	}
 
-	fmt.Printf("Could not listen on TCP %s.", port)
+	fmt.Printf("Could not listen on TCP %s.\n", port)
 	addr, err := setupAddress()
 	if err != nil {
 		return nil, err

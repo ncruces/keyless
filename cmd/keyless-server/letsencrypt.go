@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,11 +171,11 @@ func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Acco
 }
 
 var (
-	solver acmeSolver
-	_      acmez.Solver = &solver
+	solvers acmeSolvers
+	_       acmez.Solver = &solvers
 )
 
-type acmeSolver struct {
+type acmeSolvers struct {
 	sync.Mutex
 	challanges []acmeChallenge
 }
@@ -188,7 +189,7 @@ func (c acmeChallenge) Expired() bool {
 	return time.Since(c.Created) > time.Minute
 }
 
-func (s *acmeSolver) Remove(match func(c acmeChallenge) bool) {
+func (s *acmeSolvers) RemoveChallenges(match func(c acmeChallenge) bool) {
 	var n int
 	for _, c := range s.challanges {
 		if !match(c) {
@@ -202,38 +203,69 @@ func (s *acmeSolver) Remove(match func(c acmeChallenge) bool) {
 	s.challanges = s.challanges[:n]
 }
 
-func (s *acmeSolver) GetDNSChallenges(domain string) []string {
+func (s *acmeSolvers) GetDNSChallenges(domain string) []string {
 	s.Lock()
 	defer s.Unlock()
+	s.RemoveChallenges(acmeChallenge.Expired)
 
 	var res []string
-	s.Remove(acmeChallenge.Expired)
 	for _, c := range s.challanges {
-		if c.Type == acme.ChallengeTypeDNS01 && c.Identifier.Value == domain {
+		if c.Type == acme.ChallengeTypeDNS01 &&
+			strings.EqualFold(c.Identifier.Value, domain) {
 			res = append(res, c.DNS01KeyAuthorization())
 		}
 	}
 	return res
 }
 
-func (s *acmeSolver) GetTLSChallengeCert(serverName string) (*tls.Certificate, error) {
+func (s *acmeSolvers) GetTLSChallengeCert(serverName string) (*tls.Certificate, error) {
 	s.Lock()
 	defer s.Unlock()
+	s.RemoveChallenges(acmeChallenge.Expired)
 
-	s.Remove(acmeChallenge.Expired)
 	for _, c := range s.challanges {
-		if c.Type == acme.ChallengeTypeTLSALPN01 && c.Identifier.Value == serverName {
+		if c.Type == acme.ChallengeTypeTLSALPN01 &&
+			strings.EqualFold(c.Identifier.Value, serverName) {
 			return acmez.TLSALPN01ChallengeCert(c.Challenge)
 		}
 	}
 	return nil, errors.New("no matching challanges found")
 }
 
-func (s *acmeSolver) Present(_ context.Context, chal acme.Challenge) error {
+func (s *acmeSolvers) HandleHTTPChallenge(w http.ResponseWriter, r *http.Request) {
 	s.Lock()
 	defer s.Unlock()
+	s.RemoveChallenges(acmeChallenge.Expired)
 
-	s.Remove(acmeChallenge.Expired)
+	for _, c := range s.challanges {
+		if c.Type == acme.ChallengeTypeHTTP01 &&
+			r.Method == "GET" &&
+			r.URL.Path == c.HTTP01ResourcePath() &&
+			strings.EqualFold(c.Identifier.Value, r.Host) {
+			w.Write([]byte(c.KeyAuthorization))
+			r.Close = true
+		}
+	}
+}
+
+func (s *acmeSolvers) GetDNSSolvers() map[string]acmez.Solver {
+	return map[string]acmez.Solver{
+		acme.ChallengeTypeDNS01: &solvers,
+	}
+}
+
+func (s *acmeSolvers) GetAPISolvers() map[string]acmez.Solver {
+	return map[string]acmez.Solver{
+		acme.ChallengeTypeHTTP01:    &solvers,
+		acme.ChallengeTypeTLSALPN01: &solvers,
+	}
+}
+
+func (s *acmeSolvers) Present(_ context.Context, chal acme.Challenge) error {
+	s.Lock()
+	defer s.Unlock()
+	s.RemoveChallenges(acmeChallenge.Expired)
+
 	s.challanges = append(s.challanges, acmeChallenge{
 		Created:   time.Now(),
 		Challenge: chal,
@@ -241,10 +273,9 @@ func (s *acmeSolver) Present(_ context.Context, chal acme.Challenge) error {
 	return nil
 }
 
-func (s *acmeSolver) CleanUp(_ context.Context, chal acme.Challenge) error {
+func (s *acmeSolvers) CleanUp(_ context.Context, chal acme.Challenge) error {
 	s.Lock()
 	defer s.Unlock()
-
-	s.Remove(func(c acmeChallenge) bool { return chal == c.Challenge })
+	s.RemoveChallenges(func(c acmeChallenge) bool { return chal == c.Challenge })
 	return nil
 }
