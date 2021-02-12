@@ -41,6 +41,9 @@ func interactiveSetup() {
 	log.SetOutput(os.Stdout)
 	fmt.Println("Running setup...")
 
+	if err := loadConfig(); err != nil {
+		log.Fatalln("Error:", err)
+	}
 	if err := checkSetup(); err == nil {
 		fmt.Println("It seems you're all set!")
 		return
@@ -99,7 +102,7 @@ func setupAccount(ctx context.Context, client *acmez.Client) (acct acme.Account,
 	fmt.Println()
 	fmt.Print("Accept Let's Encrypt ToS? [y/n]: ")
 	if n, _ := fmt.Scanln(&answer); n != 1 || answer != "y" {
-		return acct, errors.New("Did not accept Let's Encrypt ToS")
+		return acct, errors.New("did not accept Let's Encrypt ToS")
 	}
 
 	fmt.Print("Use the production API? [y/n]: ")
@@ -136,13 +139,13 @@ func setupCertificateAndKeys(ctx context.Context, client *acmez.Client, acct acm
 		return nil
 	}
 
+	nameserver := config.Nameserver
+	app := filepath.Base(os.Args[0])
+
 	key, err := setupKey("master", config.MasterKey)
 	if err != nil {
 		return err
 	}
-
-	app := filepath.Base(os.Args[0])
-	nameserver := strings.TrimSuffix(config.Nameserver, ".")
 
 	fmt.Println()
 	fmt.Println("Starting DNS server for domain validation...")
@@ -151,15 +154,15 @@ func setupCertificateAndKeys(ctx context.Context, client *acmez.Client, acct acm
 	fmt.Printf(" - %s is reachable from the internet on UDP %s:53\n", app, nameserver)
 	fmt.Print("Continue? ")
 	fmt.Scanln()
-	fmt.Println()
 
-	conn, err := setupUDP(config.Nameserver, ":53")
+	conn, err := setupUDP(nameserver, ":53")
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	go dnsServe(conn)
 
+	fmt.Println()
 	client.ChallengeSolvers = solvers.GetDNSSolvers()
 	fmt.Printf("Obtaining a certificate for *.%s...\n", config.Domain)
 	return obtainCertificate(ctx, client, acct, key, config.Certificate, "*."+config.Domain)
@@ -171,15 +174,17 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 		return nil
 	}
 
-	key, err := setupKey("API", config.API.Key)
-	if err != nil {
-		return err
-	}
-
 	var hostname string
 	app := filepath.Base(os.Args[0])
 	if i := strings.IndexByte(config.API.Handler, '/'); i > 0 {
 		hostname = config.API.Handler[:i]
+	} else {
+		return errors.New("API handler does not have a hostname.")
+	}
+
+	key, err := setupKey("API", config.API.Key)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println()
@@ -188,7 +193,6 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 	fmt.Printf(" - %s is reachable from the internet on TCP %s:443\n", app, hostname)
 	fmt.Print("Continue? ")
 	fmt.Scanln()
-	fmt.Println()
 
 	ln, err := setupTCP(hostname, ":443")
 	if err != nil {
@@ -204,6 +208,7 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 
 	go server.ServeTLS(ln, "", "")
 
+	fmt.Println()
 	client.ChallengeSolvers = solvers.GetAPISolvers()
 	fmt.Printf("Obtaining a certificate for %s...\n", hostname)
 	return obtainCertificate(ctx, client, acct, key, config.API.Certificate, hostname)
@@ -259,6 +264,7 @@ func setupUDP(host, port string) (net.PacketConn, error) {
 		return conn, nil
 	}
 
+	fmt.Println()
 	fmt.Printf("Could not listen on UDP %s.\n", port)
 	addr, err := setupAddress()
 	if err != nil {
@@ -277,6 +283,7 @@ func setupTCP(host, port string) (net.Listener, error) {
 		return conn, nil
 	}
 
+	fmt.Println()
 	fmt.Printf("Could not listen on TCP %s.\n", port)
 	addr, err := setupAddress()
 	if err != nil {

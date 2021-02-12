@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -36,7 +37,7 @@ func loadConfig() error {
 	defer f.Close()
 
 	if err := json.NewDecoder(f).Decode(&config); err != nil {
-		return err
+		return fmt.Errorf("config.json: %w", err)
 	}
 
 	// check required fields
@@ -51,6 +52,15 @@ func loadConfig() error {
 	}
 	if config.MasterKey == "" {
 		return errors.New("master_key file path is not configured")
+	}
+	if config.API.Handler == "" {
+		return errors.New("api.handler is not configured")
+	}
+	if config.API.Certificate == "" {
+		return errors.New("api.certificate file path is not configured")
+	}
+	if config.API.Certificate == "" {
+		return errors.New("api.key file path is not configured")
 	}
 	if config.LetsEncrypt.Account == "" {
 		return errors.New("letsencrypt.account file path is not configured")

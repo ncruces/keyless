@@ -16,18 +16,18 @@ import (
 )
 
 func main() {
-	if err := loadConfig(); err != nil {
-		log.Fatalln(err)
-	}
-
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		// run the interactive setup and exit
 		interactiveSetup()
 		return
 	}
+
+	if err := loadConfig(); err != nil {
+		log.Fatalln("configuration:", err)
+	}
 	if err := checkSetup(); err != nil {
 		// ask the user to run the interactive setup
-		log.Println("letsencrypt:", err)
+		log.Println("setup:", err)
 		log.Fatalln("please, run:", os.Args[0], "setup")
 	}
 
