@@ -95,6 +95,7 @@ func main() {
 	}()
 
 	daemon.SdNotify(true, daemon.SdNotifyReady)
+	go renewCertificates()
 
 	<-shutdown
 	go func() {

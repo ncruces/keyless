@@ -37,7 +37,7 @@ func loadCertificateAndKeys() error {
 		return err
 	}
 
-	key, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
+	key, ok := cert.PrivateKey.(crypto.Signer)
 	if !ok {
 		return fmt.Errorf("unexpected type %T", cert.PrivateKey)
 	}
@@ -93,7 +93,7 @@ func loadAPI() error {
 	return nil
 }
 
-func loadAccount() (acct acme.Account, err error) {
+func loadAccount(client *acmez.Client) (acct acme.Account, err error) {
 	acct.PrivateKey, err = loadKey(config.LetsEncrypt.AccountKey)
 	if err != nil {
 		return acct, err
@@ -103,9 +103,20 @@ func loadAccount() (acct acme.Account, err error) {
 	if err != nil {
 		return acct, err
 	}
-
 	defer f.Close()
-	return acct, json.NewDecoder(f).Decode(&acct)
+
+	if err := json.NewDecoder(f).Decode(&acct); err != nil {
+		return acct, err
+	}
+
+	if client != nil && client.Directory == "" {
+		if strings.HasPrefix(acct.Location, letsencryptProduction) {
+			client.Directory = letsencryptProduction + "directory"
+		} else {
+			client.Directory = letsencryptStaging + "directory"
+		}
+	}
+	return acct, err
 }
 
 func loadKey(keyFile string) (*ecdsa.PrivateKey, error) {
@@ -127,13 +138,13 @@ func loadCertificate(certFile, keyFile, hostname string) (tls.Certificate, error
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	if err := verifyCertificate(cert, hostname); err != nil {
+	if err := verifyCertificate(&cert, hostname); err != nil {
 		return tls.Certificate{}, err
 	}
 	return cert, nil
 }
 
-func verifyCertificate(cert tls.Certificate, hostname string) (err error) {
+func verifyCertificate(cert *tls.Certificate, hostname string) (err error) {
 	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		return err

@@ -25,7 +25,7 @@ import (
 // Load private keys (master and legacy) into memory.
 // Rotating the master key requires a process restart.
 func checkSetup() error {
-	_, err := loadAccount()
+	_, err := loadAccount(nil)
 	if err != nil {
 		return err
 	}
@@ -58,14 +58,6 @@ func interactiveSetup() {
 		log.Fatalln("Error:", err)
 	}
 
-	if client.Directory == "" {
-		if strings.HasPrefix(acct.Location, letsencryptProduction) {
-			client.Directory = letsencryptProduction + "directory"
-		} else {
-			client.Directory = letsencryptStaging + "directory"
-		}
-	}
-
 	if err := setupCertificateAndKeys(ctx, client, acct); err != nil {
 		log.Fatalln("Error:", err)
 	}
@@ -79,7 +71,7 @@ func interactiveSetup() {
 }
 
 func setupAccount(ctx context.Context, client *acmez.Client) (acct acme.Account, err error) {
-	acct, err = loadAccount()
+	acct, err = loadAccount(client)
 	if err == nil {
 		fmt.Println("Using the existing Let's Encrypt account.")
 		return acct, nil
