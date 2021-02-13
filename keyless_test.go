@@ -1,10 +1,12 @@
-package keyless
+package keyless_test
 
 import (
 	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/ncruces/keyless"
 )
 
 func ExampleGetCertificate() {
@@ -16,7 +18,7 @@ func ExampleGetCertificate() {
 	srv := http.Server{
 		Addr: "localhost:8443",
 		TLSConfig: &tls.Config{
-			GetCertificate: GetCertificate(os.Getenv("API_URL"), auth),
+			GetCertificate: keyless.GetCertificate(os.Getenv("API_URL"), auth),
 		},
 	}
 

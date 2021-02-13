@@ -20,8 +20,8 @@ The Go package is quite simple to use:
 
 ```go
 srv := http.Server{
-		TLSConfig: &tls.Config{
-		GetCertificate: GetCertificate("keyless.example.com"),
+	TLSConfig: &tls.Config{
+		GetCertificate: keyless.GetCertificate("keyless.example.com"),
 	},
 }
 

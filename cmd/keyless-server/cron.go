@@ -24,7 +24,7 @@ func renewCertificates() {
 
 		if i := strings.IndexByte(config.API.Handler, '/'); i > 0 {
 			hostname := config.API.Handler[:i]
-			client.ChallengeSolvers = solvers.GetDNSSolvers()
+			client.ChallengeSolvers = solvers.GetAPISolvers()
 			err := renewCertificate(client, config.API.Certificate, config.API.Key, hostname)
 			if err != nil {
 				log.Print(err)
@@ -58,6 +58,6 @@ func renewCertificate(client *acmez.Client, certFile, keyFile, hostname string) 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	log.Println("reneweing the certificate for", hostname)
+	log.Println("renewing the certificate for", hostname)
 	return obtainCertificate(ctx, client, acct, key, certFile, hostname)
 }
