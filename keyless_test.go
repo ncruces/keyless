@@ -2,15 +2,15 @@ package keyless
 
 import (
 	"crypto/tls"
+	"log"
 	"net/http"
 	"os"
-	"testing"
 )
 
-func TestGetCertificate(t *testing.T) {
+func ExampleGetCertificate() {
 	auth, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
-		t.Fatal(err)
+		log.Fatal(err)
 	}
 
 	srv := http.Server{
@@ -22,6 +22,8 @@ func TestGetCertificate(t *testing.T) {
 
 	err = srv.ListenAndServeTLS("", "")
 	if err != nil {
-		t.Fatal(err)
+		log.Fatal(err)
 	}
+
+	// Output:
 }
