@@ -28,6 +28,12 @@ func renewCertificates() {
 			err := renewCertificate(client, config.API.Certificate, config.API.Key, hostname)
 			if err != nil {
 				log.Print(err)
+			} else if cert, err := loadCertificate(config.API.Certificate, config.API.Key, hostname); err != nil {
+				log.Print(err)
+			} else {
+				httpCert.Lock()
+				httpCert.Certificate = &cert
+				httpCert.Unlock()
 			}
 		}
 

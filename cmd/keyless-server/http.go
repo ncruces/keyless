@@ -14,27 +14,30 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/mholt/acmez"
 )
 
-var apiCert tls.Certificate
+var httpCert struct {
+	sync.Mutex
+	*tls.Certificate
+}
 
 func httpInit() (*http.Server, error) {
-	var err error
-	var cfg tls.Config
-
-	apiCert, err = tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
+	cert, err := tls.LoadX509KeyPair(config.API.Certificate, config.API.Key)
 	if os.IsNotExist(err) {
-		apiCert.PrivateKey, err = loadKey(config.API.Key)
+		cert.PrivateKey, err = loadKey(config.API.Key)
 	} else if err == nil {
-		apiCert.Leaf, err = x509.ParseCertificate(apiCert.Certificate[0])
+		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 	}
 	if err != nil {
 		return nil, err
 	}
+	httpCert.Certificate = &cert
 
+	var cfg tls.Config
 	cfg.NextProtos = []string{"h2", "http/1.1", acmez.ACMETLS1Protocol}
 
 	cfg.GetCertificate = func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -44,13 +47,15 @@ func httpInit() (*http.Server, error) {
 		if len(chi.SupportedProtos) == 1 && chi.SupportedProtos[0] == acmez.ACMETLS1Protocol {
 			return solvers.GetTLSChallengeCert(chi.ServerName)
 		}
-		if apiCert.Certificate == nil {
-			return getSelfSignedCert(apiCert.PrivateKey)
+		httpCert.Lock()
+		defer httpCert.Unlock()
+		if len(httpCert.Certificate.Certificate) == 0 {
+			return getSelfSignedCert(httpCert.PrivateKey)
 		}
-		if err := chi.SupportsCertificate(&apiCert); err != nil {
+		if err := chi.SupportsCertificate(httpCert.Certificate); err != nil {
 			return nil, err
 		}
-		return &apiCert, nil
+		return httpCert.Certificate, nil
 	}
 
 	if config.API.ClientCA != "" {
