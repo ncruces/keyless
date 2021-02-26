@@ -27,6 +27,8 @@ var config struct {
 		Account    string `json:"account"`     // required, file path
 		AccountKey string `json:"account_key"` // required, file path
 	} `json:"letsencrypt"`
+
+	Replica string `json:"replica"` // optional
 }
 
 func loadConfig() error {

@@ -214,47 +214,36 @@ func (s *acmeSolvers) RemoveChallenges(match func(c acmeChallenge) bool) {
 	s.challanges = s.challanges[:n]
 }
 
-func (s *acmeSolvers) GetDNSChallenges(domain string) []string {
-	s.Lock()
-	defer s.Unlock()
-	s.RemoveChallenges(acmeChallenge.Expired)
-
+func (s *acmeSolvers) GetLocalAuthorizations(typ, name string) []string {
 	var res []string
-	for _, c := range s.challanges {
-		if c.Type == acme.ChallengeTypeDNS01 &&
-			strings.EqualFold(c.Identifier.Value, domain) {
-			res = append(res, c.DNS01KeyAuthorization())
-		}
+	for _, c := range s.GetChallenges(typ, name, false) {
+		res = append(res, c.KeyAuthorization)
+	}
+	return res
+}
+
+func (s *acmeSolvers) GetDNSChallenges(domain string) []string {
+	var res []string
+	for _, c := range s.GetChallenges(acme.ChallengeTypeDNS01, domain, true) {
+		res = append(res, c.DNS01KeyAuthorization())
 	}
 	return res
 }
 
 func (s *acmeSolvers) GetTLSChallengeCert(serverName string) (*tls.Certificate, error) {
-	s.Lock()
-	defer s.Unlock()
-	s.RemoveChallenges(acmeChallenge.Expired)
-
-	for _, c := range s.challanges {
-		if c.Type == acme.ChallengeTypeTLSALPN01 &&
-			strings.EqualFold(c.Identifier.Value, serverName) {
-			return acmez.TLSALPN01ChallengeCert(c.Challenge)
-		}
+	for _, c := range s.GetChallenges(acme.ChallengeTypeTLSALPN01, serverName, true) {
+		return acmez.TLSALPN01ChallengeCert(c)
 	}
 	return nil, errors.New("no matching challanges found")
 }
 
 func (s *acmeSolvers) HandleHTTPChallenge(w http.ResponseWriter, r *http.Request) {
-	s.Lock()
-	defer s.Unlock()
-	s.RemoveChallenges(acmeChallenge.Expired)
-
-	for _, c := range s.challanges {
-		if c.Type == acme.ChallengeTypeHTTP01 &&
-			r.Method == "GET" &&
-			r.URL.Path == c.HTTP01ResourcePath() &&
-			strings.EqualFold(c.Identifier.Value, r.Host) {
-			w.Write([]byte(c.KeyAuthorization))
-			return
+	if r.Method == "GET" {
+		for _, c := range s.GetChallenges(acme.ChallengeTypeHTTP01, r.Host, true) {
+			if r.URL.Path == c.HTTP01ResourcePath() {
+				w.Write([]byte(c.KeyAuthorization))
+				return
+			}
 		}
 	}
 	http.NotFound(w, r)
@@ -277,7 +266,6 @@ func (s *acmeSolvers) Present(_ context.Context, chal acme.Challenge) error {
 	s.Lock()
 	defer s.Unlock()
 	s.RemoveChallenges(acmeChallenge.Expired)
-
 	s.challanges = append(s.challanges, acmeChallenge{
 		Created:   time.Now(),
 		Challenge: chal,
@@ -290,4 +278,31 @@ func (s *acmeSolvers) CleanUp(_ context.Context, chal acme.Challenge) error {
 	defer s.Unlock()
 	s.RemoveChallenges(func(c acmeChallenge) bool { return chal == c.Challenge })
 	return nil
+}
+
+func (s *acmeSolvers) GetChallenges(typ, name string, remote bool) []acme.Challenge {
+	var res []acme.Challenge
+
+	if remote {
+		for _, auth := range replicaClient(typ, name) {
+			if i := strings.IndexByte(auth, '.'); i >= 0 {
+				res = append(res, acme.Challenge{
+					Type:             typ,
+					KeyAuthorization: auth,
+					Token:            auth[:i],
+					Identifier:       acme.Identifier{Value: name},
+				})
+			}
+		}
+	}
+
+	s.Lock()
+	defer s.Unlock()
+	s.RemoveChallenges(acmeChallenge.Expired)
+	for _, c := range s.challanges {
+		if c.Type == typ && strings.EqualFold(c.Identifier.Value, name) {
+			res = append(res, c.Challenge)
+		}
+	}
+	return res
 }

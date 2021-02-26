@@ -37,12 +37,13 @@ func main() {
 	defer cancel()
 
 	fs := activation.Files(true)
-	if len(fs) > 2 {
+	if len(fs) > 3 {
 		log.Fatalln("activation: unexpected number of files")
 	}
 
 	var httpln net.Listener
 	var dnsconn net.PacketConn
+	var replconn net.PacketConn
 	if len(fs) > 0 {
 		var err error
 		httpln, err = net.FileListener(fs[0])
@@ -65,6 +66,14 @@ func main() {
 			log.Fatalln("dns server:", err)
 		}
 		defer dnsconn.Close()
+	}
+	if len(fs) > 2 {
+		var err error
+		replconn, err = net.FilePacketConn(fs[2])
+		if err != nil {
+			log.Fatalln("activation:", err)
+		}
+		fs[2].Close()
 	}
 
 	httpsrv, err := httpInit()
@@ -93,6 +102,16 @@ func main() {
 			log.Fatalln("dns server:", err)
 		}
 	}()
+
+	if replconn != nil {
+		go func() {
+			err := replicaServe(replconn)
+			// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
+			if err != nil && !strings.HasSuffix(err.Error(), "use of closed network connection") {
+				log.Fatalln("replica server:", err)
+			}
+		}()
+	}
 
 	daemon.SdNotify(true, daemon.SdNotifyReady)
 	go renewCertificates()
