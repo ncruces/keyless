@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func Test_convertTXTtoCAA(t *testing.T) {
+func TestConvertTXTtoCAA(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string

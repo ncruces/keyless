@@ -23,11 +23,10 @@ func dnsConfig() error {
 }
 
 func dnsServe(conn net.PacketConn) error {
-	buf := make([]byte, 512)
+	var buf [512]byte
 	for {
 		var nerr net.Error
-		buf = buf[:cap(buf)]
-		n, addr, err := conn.ReadFrom(buf)
+		n, addr, err := conn.ReadFrom(buf[:])
 		if errors.As(err, &nerr) && !nerr.Temporary() && !nerr.Timeout() {
 			return err
 		}
@@ -53,7 +52,7 @@ func dnsServe(conn net.PacketConn) error {
 		// only QUERY is implemented
 		if header.OpCode != 0 {
 			res.header.RCode = dnsmessage.RCodeNotImplemented
-			logError(res.send(conn, addr, buf))
+			logError(res.send(conn, addr, buf[:0]))
 			continue
 		}
 
@@ -61,18 +60,18 @@ func dnsServe(conn net.PacketConn) error {
 		// refuse zero questions
 		if err == dnsmessage.ErrSectionDone {
 			res.header.RCode = dnsmessage.RCodeRefused
-			logError(res.send(conn, addr, buf))
+			logError(res.send(conn, addr, buf[:0]))
 			continue
 		}
 		// report error
 		if err != nil {
 			res.header.RCode = dnsmessage.RCodeFormatError
-			logError(res.send(conn, addr, buf))
+			logError(res.send(conn, addr, buf[:0]))
 			continue
 		}
 		// answer the first question only, ingore everything else
 		res.header.RCode = res.answerQuestion(question)
-		logError(res.send(conn, addr, buf))
+		logError(res.send(conn, addr, buf[:0]))
 	}
 }
 
@@ -215,8 +214,6 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 }
 
 func (r *response) send(conn net.PacketConn, addr net.Addr, buf []byte) error {
-	buf = buf[:0]
-
 	builder := dnsmessage.NewBuilder(buf, r.header)
 	builder.EnableCompression()
 

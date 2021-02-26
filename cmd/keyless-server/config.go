@@ -8,24 +8,24 @@ import (
 )
 
 var config struct {
-	Domain     string `json:"domain"`
-	Nameserver string `json:"nameserver"`
-	CName      string `json:"cname"`
+	Domain     string `json:"domain"`     // required
+	Nameserver string `json:"nameserver"` // required
+	CName      string `json:"cname"`      // optional
 
-	Certificate string `json:"certificate"`
-	MasterKey   string `json:"master_key"`
-	LegacyKeys  string `json:"legacy_keys"`
+	Certificate string `json:"certificate"` // required, file path
+	MasterKey   string `json:"master_key"`  // required, file path
+	LegacyKeys  string `json:"legacy_keys"` // optional, file glob
 
 	API struct {
-		Handler     string `json:"handler"`
-		Certificate string `json:"certificate"`
-		Key         string `json:"key"`
-		ClientCA    string `json:"client_ca"`
+		Handler     string `json:"handler"`     // required
+		Certificate string `json:"certificate"` // required, file path
+		Key         string `json:"key"`         // required, file path
+		ClientCA    string `json:"client_ca"`   // optional, file path
 	} `json:"api"`
 
 	LetsEncrypt struct {
-		Account    string `json:"account"`
-		AccountKey string `json:"account_key"`
+		Account    string `json:"account"`     // required, file path
+		AccountKey string `json:"account_key"` // required, file path
 	} `json:"letsencrypt"`
 }
 
@@ -59,19 +59,15 @@ func loadConfig() error {
 	if config.API.Certificate == "" {
 		return errors.New("api.certificate file path is not configured")
 	}
-	if config.API.Certificate == "" {
+	if config.API.Key == "" {
 		return errors.New("api.key file path is not configured")
 	}
 	if config.LetsEncrypt.Account == "" {
 		return errors.New("letsencrypt.account file path is not configured")
 	}
-	if config.LetsEncrypt.Account == "" {
+	if config.LetsEncrypt.AccountKey == "" {
 		return errors.New("letsencrypt.account_key file path is not configured")
 	}
 
-	if err := dnsConfig(); err != nil {
-		return err
-	}
-
-	return nil
+	return dnsConfig()
 }

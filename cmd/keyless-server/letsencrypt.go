@@ -254,21 +254,22 @@ func (s *acmeSolvers) HandleHTTPChallenge(w http.ResponseWriter, r *http.Request
 			r.URL.Path == c.HTTP01ResourcePath() &&
 			strings.EqualFold(c.Identifier.Value, r.Host) {
 			w.Write([]byte(c.KeyAuthorization))
-			r.Close = true
+			return
 		}
 	}
+	http.NotFound(w, r)
 }
 
 func (s *acmeSolvers) GetDNSSolvers() map[string]acmez.Solver {
 	return map[string]acmez.Solver{
-		acme.ChallengeTypeDNS01: &solvers,
+		acme.ChallengeTypeDNS01: s,
 	}
 }
 
 func (s *acmeSolvers) GetAPISolvers() map[string]acmez.Solver {
 	return map[string]acmez.Solver{
-		acme.ChallengeTypeHTTP01:    &solvers,
-		acme.ChallengeTypeTLSALPN01: &solvers,
+		acme.ChallengeTypeHTTP01:    s,
+		acme.ChallengeTypeTLSALPN01: s,
 	}
 }
 
