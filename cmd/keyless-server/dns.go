@@ -76,10 +76,9 @@ func dnsServe(conn net.PacketConn) error {
 }
 
 type response struct {
-	header    dnsmessage.Header
-	question  dnsmessage.Question
-	answer    func(*dnsmessage.Builder) error
-	authority bool
+	header   dnsmessage.Header
+	question dnsmessage.Question
+	answer   func(*dnsmessage.Builder) error
 }
 
 func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode {
@@ -145,33 +144,28 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 			r.answer = func(b *dnsmessage.Builder) error {
 				return b.CNAMEResource(header, dnsmessage.CNAMEResource{CNAME: cname})
 			}
-
-		default:
-			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
 	// Let's Encrypt challenge
 	if name == "_acme-challenge" {
-		switch {
-		case question.Type == dnsmessage.TypeTXT:
-			header.TTL = 5 * 60 // 5 minutes
-			r.answer = func(b *dnsmessage.Builder) error {
-				return b.TXTResource(header, dnsmessage.TXTResource{
-					TXT: solvers.GetDNSChallenges(config.Domain),
-				})
+		if question.Type == dnsmessage.TypeTXT {
+			challenges := solvers.GetDNSChallenges(config.Domain)
+			if len(challenges) > 0 {
+				header.TTL = 5 * 60 // 5 minutes
+				r.answer = func(b *dnsmessage.Builder) error {
+					return b.TXTResource(header, dnsmessage.TXTResource{
+						TXT: challenges,
+					})
+				}
 			}
-
-		default:
-			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
 	// NXDOMAIN multi-level subdomains
 	if strings.ContainsRune(name, '.') {
-		r.authority = true
 		return dnsmessage.RCodeNameError
 	}
 
@@ -201,15 +195,11 @@ func (r *response) answerQuestion(question dnsmessage.Question) dnsmessage.RCode
 					return b.AAAAResource(header, res)
 				}
 			}
-
-		default:
-			r.authority = true
 		}
 		return dnsmessage.RCodeSuccess
 	}
 
 	// NXDOMAIN everything else
-	r.authority = true
 	return dnsmessage.RCodeNameError
 }
 
@@ -276,7 +266,11 @@ func (r *response) sendAnswer(builder *dnsmessage.Builder) error {
 }
 
 func (r *response) sendAuthority(builder *dnsmessage.Builder) error {
-	if !r.authority {
+	// send SOA for NOERROR or NXDOMAIN with no answer
+	if r.header.RCode != dnsmessage.RCodeSuccess && r.header.RCode != dnsmessage.RCodeNameError {
+		return nil
+	}
+	if r.answer != nil {
 		return nil
 	}
 
