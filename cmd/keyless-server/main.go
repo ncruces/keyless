@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -97,8 +96,7 @@ func main() {
 
 	go func() {
 		err := dnsServe(dnsconn)
-		// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
-		if err != nil && !strings.HasSuffix(err.Error(), "use of closed network connection") {
+		if errors.Is(err, net.ErrClosed) {
 			log.Fatalln("dns server:", err)
 		}
 	}()
@@ -106,8 +104,7 @@ func main() {
 	if replconn != nil {
 		go func() {
 			err := replicaServe(replconn)
-			// TODO: replace with errors.Is(err, net.ErrClosed) after Go 1.16
-			if err != nil && !strings.HasSuffix(err.Error(), "use of closed network connection") {
+			if errors.Is(err, net.ErrClosed) {
 				log.Fatalln("replica server:", err)
 			}
 		}()
