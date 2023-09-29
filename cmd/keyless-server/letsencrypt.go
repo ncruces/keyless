@@ -12,7 +12,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,7 +80,7 @@ func loadAPI() error {
 	}
 
 	if config.API.ClientCA != "" {
-		cert, err := ioutil.ReadFile(config.API.ClientCA)
+		cert, err := os.ReadFile(config.API.ClientCA)
 		if err != nil {
 			return err
 		}
@@ -120,7 +119,7 @@ func loadAccount(client *acmez.Client) (acct acme.Account, err error) {
 }
 
 func loadKey(keyFile string) (*ecdsa.PrivateKey, error) {
-	buf, err := ioutil.ReadFile(keyFile)
+	buf, err := os.ReadFile(keyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +164,7 @@ func obtainCertificate(ctx context.Context, client *acmez.Client, acct acme.Acco
 	}
 
 	for _, acme := range certs {
-		f, err := ioutil.TempFile(filepath.Split(certFile))
+		f, err := os.CreateTemp(filepath.Split(certFile))
 		if err != nil {
 			return err
 		}

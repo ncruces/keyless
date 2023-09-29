@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -121,7 +120,7 @@ func setupAccount(ctx context.Context, client *acmez.Client) (acct acme.Account,
 		return acct, err
 	}
 
-	err = ioutil.WriteFile(config.LetsEncrypt.Account, json, 0400)
+	err = os.WriteFile(config.LetsEncrypt.Account, json, 0400)
 	return acct, err
 }
 
@@ -171,7 +170,7 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 	if i := strings.IndexByte(config.API.Handler, '/'); i > 0 {
 		hostname = config.API.Handler[:i]
 	} else {
-		return errors.New("API handler does not have a hostname.")
+		return errors.New("API handler does not have a hostname")
 	}
 
 	key, err := setupKey("API", config.API.Key)
@@ -207,7 +206,7 @@ func setupAPI(ctx context.Context, client *acmez.Client, acct acme.Account) erro
 }
 
 func setupKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
-	if buf, err := ioutil.ReadFile(keyFile); os.IsNotExist(err) {
+	if buf, err := os.ReadFile(keyFile); os.IsNotExist(err) {
 		fmt.Println("Creating a new", keyName, "private key...")
 
 		err := os.MkdirAll(filepath.Dir(keyFile), 0700)
@@ -226,7 +225,7 @@ func setupKey(keyName, keyFile string) (*ecdsa.PrivateKey, error) {
 		}
 
 		pem := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
-		err = ioutil.WriteFile(keyFile, pem, 0400)
+		err = os.WriteFile(keyFile, pem, 0400)
 		if err != nil {
 			return nil, err
 		}

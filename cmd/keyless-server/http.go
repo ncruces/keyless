@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -59,7 +58,7 @@ func httpInit() (*http.Server, error) {
 	}
 
 	if config.API.ClientCA != "" {
-		cert, err := ioutil.ReadFile(config.API.ClientCA)
+		cert, err := os.ReadFile(config.API.ClientCA)
 		if err != nil {
 			return nil, err
 		}
