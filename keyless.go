@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,7 +53,7 @@ func GetCertificate(apiURL string, mTLS ...tls.Certificate) func(info *tls.Clien
 			return nil, fmt.Errorf("fetching certificate: %s", res.Status)
 		}
 
-		data, err := ioutil.ReadAll(res.Body)
+		data, err := io.ReadAll(res.Body)
 		if err != nil {
 			return nil, fmt.Errorf("fetching certificate: %w", err)
 		}
@@ -130,7 +129,7 @@ func (s signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (sig
 		return nil, fmt.Errorf("signing digest: %s", res.Status)
 	}
 
-	data, err := ioutil.ReadAll(res.Body)
+	data, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("signing digest: %w", err)
 	}
