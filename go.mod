@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/mholt/acmez v1.2.0
-	golang.org/x/net v0.23.0
+	golang.org/x/net v0.33.0
 )
 
 require (
